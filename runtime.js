@@ -2314,7 +2314,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.12（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.13（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2363,7 +2363,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.12';
+globalThis.__PC_VERSION = '0.8.60-native.13';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -8967,6 +8967,40 @@ function charTestResult(c) {
     const r = ui.charTestResult;
     return r && r.key === c?.key && r.data === getData() && r.image === ui.charTestImg ? r : null;
 }
+// 角色参考分组：只改变选择列表的展示，不修改任何绑定或参考图片。
+function partitionCharacterReferences(data, character, currentCast = []) {
+    const owner = c => c?.kind === 'char' ? c.avatar : c?.kind === 'side' ? c.card : '';
+    const here = currentCast.map(row => row.char).filter(Boolean);
+    const card = owner(character);
+    const inChat = here.some(c => c.key === character?.key || (card && owner(c) === card));
+    const related = inChat ? [...here, character] : [character];
+    const keys = new Set(related.map(c => c?.key).filter(Boolean));
+    const cards = new Set(related.map(owner).filter(Boolean));
+    const refs = new Set(related.map(c => c?.charRef).filter(Boolean));
+    for (const c of Object.values(data.characters || {})) {
+        if (c && (keys.has(c.key) || (owner(c) && cards.has(owner(c)))) && c.charRef) refs.add(c.charRef);
+    }
+    // 当前选中的跨卡参考也始终显示，避免折叠后让人误以为绑定丢失。
+    if (character?.charRef) refs.add(character.charRef);
+    const local = [], other = [];
+    for (const group of Object.values(data.charRefGroups || {})) {
+        if (group?.id) (refs.has(group.id) ? local : other).push(group);
+    }
+    return { local, other };
+}
+
+function renderCharacterReferencePicker(data, character, currentCast, esc) {
+    const { local, other } = partitionCharacterReferences(data, character, currentCast);
+    const selected = data.charRefGroups?.[character?.charRef]?.id;
+    const button = group => `<button type="button" class="pc-pill ${selected === group.id ? 'on' : 'dashed'}" data-act="charrefpick" data-id="${esc(group.id)}" data-lp="crgroup">${esc(group.name || '未命名参考')}</button>`;
+    return `<div data-character-reference-picker>
+      <div class="pc-chips wrap" data-local-charrefs><button type="button" class="pc-pill ${!selected ? 'on' : 'dashed'}" data-act="charrefpick" data-id="">不用</button>${local.map(button).join('')}
+        <label class="pc-pill dashed">＋ 新的一组<input type="file" accept="image/*" data-charrefup hidden></label></div>
+      ${other.length ? `<details class="pc-fold pc-mt-s" data-other-charrefs><summary><b>其他角色／未绑定的参考</b><i>${other.length} 组 · 点击展开</i></summary><div class="pc-fold-in"><div class="pc-chips wrap">${other.map(button).join('')}</div></div></details>` : ''}
+    </div>`;
+}
+// 角色参考分组结束。
+
 function viewCharEdit(d) {
     const c = C.getChar(ui.charKey);
     if (!c) { ui.view = 'cast'; return viewCast(d); }
@@ -9030,8 +9064,7 @@ function viewCharEdit(d) {
       ${(() => {
         const g = c.charRef && d.charRefGroups?.[c.charRef];
         const TYPES = [['character', '只参考长相'], ['both', '长相和画风'], ['style', '只参考画风']];
-        return `<div class="pc-chips wrap"><button class="pc-pill ${!g ? 'on' : 'dashed'}" data-act="charrefpick" data-id="">不用</button>${Object.values(d.charRefGroups || {}).map(x => `<button class="pc-pill ${g && g.id === x.id ? 'on' : 'dashed'}" data-act="charrefpick" data-id="${x.id}" data-lp="crgroup">${esc(x.name)}</button>`).join('')}
-        <label class="pc-pill dashed">＋ 新的一组<input type="file" accept="image/*" data-charrefup hidden></label></div>
+        return `${renderCharacterReferencePicker(d, c, C.currentCast(), esc)}
         ${g ? `<div class="pc-row-between pc-mt-s"><span class="pc-dim small">「${esc(g.name)}」· ${g.refs.length} 张</span><label class="pc-pill dashed tiny">＋ 加图<input type="file" accept="image/*" multiple data-cradd="${g.id}" hidden></label></div>
         ${g.refs.map((r, i) => `<div class="pc-vrow"><div class="pc-vthumb"><img src="${esc('/' + r.path)}" alt=""></div>
           <div class="pc-grow"><div class="pc-row-between"><select class="pc-mini-select" data-crtype="${g.id}:${i}">${TYPES.map(([v, t]) => `<option value="${v}" ${v === (r.type || 'character') ? 'selected' : ''}>${t}</option>`).join('')}</select><button class="pc-x" data-act="crdel" data-g="${g.id}" data-i="${i}" aria-label="删掉">×</button></div>

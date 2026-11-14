@@ -22,10 +22,13 @@ const markers = runtime.slice(runtime.indexOf('// Marker-triggered generation'),
 const profileActions = runtime.slice(runtime.indexOf("case 'profile-open':"), runtime.indexOf("case 'casttab':", runtime.indexOf("case 'profile-open':")));
 const backfillAction = runtime.slice(runtime.indexOf("case 'image-backfill':"), runtime.indexOf("case 'comicbook':", runtime.indexOf("case 'image-backfill':")));
 const naiNetwork = runtime.slice(runtime.indexOf('function createNaiNetwork('), runtime.indexOf('const naiNetwork ='));
-const module = naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
+const referencePicker = runtime.slice(runtime.indexOf('// 角色参考分组：'), runtime.indexOf('// 角色参考分组结束。'));
+const referenceAction = runtime.match(/case 'charrefpick': ([^\n]+)/)?.[1];
+if (!referenceAction) throw new Error('缺少正式参考绑定操作');
+const module = referencePicker + '\nfunction pickCharacterReference(c,el,save) {'+referenceAction+'}\n' + naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
     + '\nfunction onBackfillClick(ev) { const ui = {view:"comic"}; switch(ev.target.dataset.act) {' + backfillAction + '} }'
     + '\nasync function profileAction(act,key) { const ui={charKey:key}; switch(act) {'+profileActions+'} }'
-    + '\nexport { createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction };';
+    + '\nexport { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction };';
 const html = fs.readFileSync(path.join(root, 'dev/comic-browser.html'), 'utf8');
 const server = http.createServer((request, response) => {
     const isModule = request.url === '/runtime-comic.js';
@@ -45,7 +48,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 71) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 77) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

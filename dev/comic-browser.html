@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
+import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
     if (!value) throw new Error(name);
@@ -146,6 +146,26 @@ window.stcrSelfTest = async () => {
     promptBox.querySelector('[data-act="illprompt-preview"]').click(); await nextTurn();
     check('保存和预览使用同一份互动提示词', previewRequest.system === promptOptions.illustPrompt && previewRequest.system.includes('source#hug'));
     check('互动规则编辑器适配手机宽度', document.documentElement.scrollWidth <= window.innerWidth);
+    const refBox=document.createElement('section');document.body.append(refBox);
+    const refChar={key:'char:a',kind:'char',avatar:'a',name:'当前角色',charRef:'local'};
+    const refOther={key:'char:b',kind:'char',avatar:'b',name:'其他角色',charRef:'remote'};
+    const refData={characters:{a:refChar,b:refOther},charRefGroups:{local:{id:'local',name:'本卡参考'},remote:{id:'remote',name:'其他卡参考'}}};
+    const refImages=JSON.stringify(refData.charRefGroups);
+    let refSaves=0;
+    const drawRefs=()=>{refBox.innerHTML=renderCharacterReferencePicker(refData,refChar,[{char:refChar}],escape);};
+    refBox.addEventListener('click',event=>{const button=event.target.closest('[data-act="charrefpick"]');if(button)pickCharacterReference(refChar,button,()=>{refSaves++;drawRefs();});});
+    drawRefs();
+    const refDetails=refBox.querySelector('[data-other-charrefs]');
+    check('长相参考默认只展开本卡组', !refDetails.open && !!refBox.querySelector('[data-local-charrefs] [data-id="local"]'));
+    refDetails.querySelector('summary').click();await nextTurn();
+    check('手机展开其他参考组可见可点', refDetails.open && refDetails.querySelector('[data-id="remote"]').getBoundingClientRect().height>0);
+    refDetails.querySelector('[data-id="remote"]').click();await nextTurn();
+    check('选择其他参考沿用正式绑定操作', refChar.charRef==='remote' && refSaves===1);
+    check('已选跨卡参考保持在折叠外且只出现一次', !!refBox.querySelector('[data-local-charrefs] [data-id="remote"].on') && refBox.querySelectorAll('[data-id="remote"]').length===1);
+    refBox.querySelector('[data-id=""]').click();await nextTurn();
+    check('不用参考仍可选择且原图未改动', refChar.charRef==='' && refSaves===2 && JSON.stringify(refData.charRefGroups)===refImages);
+    check('参考折叠选择器不超出手机宽度', refBox.getBoundingClientRect().right<=window.innerWidth);
+    refBox.remove();
     check('漫画设置显示完整分镜和留白选择', document.querySelector('[data-clayout="comicPanelStyle"]').options.length === 8 && document.querySelector('[data-clayout="comicGutter"]').options.length === 5);
     data.options.comicPanels = '1–2';
     const setLayout = (key, value) => { const select=document.querySelector(`[data-clayout="${key}"]`);select.value=value;select.dispatchEvent(new Event('change',{bubbles:true})); };
