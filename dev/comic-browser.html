@@ -94,6 +94,11 @@ window.stcrSelfTest = async () => {
     from.value = '79'; to.value = '81'; from.dispatchEvent(new Event('change', { bubbles: true }));
     check('正式补图入口可选漫画和楼层范围', document.querySelector('[data-backfill-mode]').value === 'comic' && to.value === '81');
     check('预览跳过已有漫画并统计隐藏楼', document.querySelector('[data-backfill-preview]').textContent.includes('可补 2 楼'));
+    const modeSelect = document.querySelector('[data-backfill-mode]');
+    modeSelect.value = 'ill'; modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check('切换普通插图后仅有漫画的楼层可补', document.querySelector('[data-backfill-preview]').textContent.includes('可补 3 楼') && document.querySelector('[data-backfill-preview]').textContent.includes('已有普通插图 0 楼'));
+    modeSelect.value = 'comic'; modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check('切回漫画后重新按漫画图片统计', document.querySelector('[data-backfill-preview]').textContent.includes('可补 2 楼') && document.querySelector('[data-backfill-preview]').textContent.includes('已有漫画 1 楼'));
     let release;
     drawBarrier = new Promise(resolve => { release = resolve; });
     document.querySelector('[data-backfill-start]').click(); await nextTurn();

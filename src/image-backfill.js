@@ -9,7 +9,7 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
     let active = null, cancelled = false, stopped = false;
     const snapshot = () => ({ ...state, rows: state.rows.map(row => ({ ...row })) });
     const emit = () => { for (const listener of listeners) listener(snapshot()); };
-    function inspect(id) {
+    function inspect(id, mode) {
         const msg = getContext().chat?.[id];
         if (!isComicReply(msg)) return { eligible: false };
         const illustration = marker.status(id), pages = comic.status(id);
@@ -18,15 +18,17 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
         const body = (content.length ? content.map(block => block[1]).join('\n') : String(msg.mes || ''))
             .replace(/<(details|script|style|think|thinking|analysis)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
         const inline = /<img\b[^>]*\bsrc\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>]+)/i.test(body) || /!\[[^\]]*\]\(\s*[^\s)]+/.test(body);
-        return { eligible: true, images: illustration.images + pages.images + Number(inline), busy: illustration.busy || pages.busy || planner.status(id).busy };
+        // 两种图片分别补缺，任一流程在途时仍共用楼层忙碌保护。
+        const images = mode === 'comic' ? pages.images : illustration.images + Number(inline);
+        return { eligible: true, images, busy: illustration.busy || pages.busy || planner.status(id).busy };
     }
     function range(from, to) {
         const last = (getContext().chat?.length || 0) - 1;
         if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || from > to || to > last) throw new Error('请填写当前聊天中有效的起止楼层编号');
         return getContext().chat.slice(from, to + 1).map((msg, index) => ({ id: from + index, msg, source: msg?.mes, swipe: msg?.swipe_id }));
     }
-    function preview(from, to) {
-        const rows = range(from, to).map(row => inspect(row.id));
+    function preview(from, to, mode = 'ill') {
+        const rows = range(from, to).map(row => inspect(row.id, mode));
         return { candidates: rows.filter(row => row.eligible && !row.images && !row.busy).length, images: rows.filter(row => row.eligible && row.images).length, busy: rows.filter(row => row.eligible && row.busy).length };
     }
     async function run(jobs, chat, mode) {
@@ -35,12 +37,12 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
                 if (cancelled || stopped) break;
                 if (chatKey(getContext()) !== chat) { state.reason = '聊天已切换，补图已停止'; break; }
                 const row = state.rows.find(row => row.id === job.id);
-                const msg = getContext().chat?.[job.id], before = inspect(job.id);
+                const msg = getContext().chat?.[job.id], before = inspect(job.id, mode);
                 if (msg !== job.msg || msg?.mes !== job.source || msg?.swipe_id !== job.swipe) {
                     Object.assign(row, { status: 'skipped', reason: '正文或候选回复已变化' }); emit(); continue;
                 }
                 if (!before.eligible || before.images || before.busy) {
-                    Object.assign(row, { status: 'skipped', reason: before.images ? '已有图片' : before.busy ? '正在生成' : '没有角色正文' }); emit(); continue;
+                    Object.assign(row, { status: 'skipped', reason: before.images ? (mode === 'comic' ? '已有漫画' : '已有普通插图') : before.busy ? '正在生成' : '没有角色正文' }); emit(); continue;
                 }
                 row.status = 'working'; emit();
                 try {
@@ -75,7 +77,7 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
         if (stopped) throw new Error('补图模块已停用，请刷新智库');
         if (state.running) return active;
         if (!['ill', 'comic'].includes(mode)) throw new Error('请选择普通插图或漫画');
-        const jobs = range(from, to).filter(job => inspect(job.id).eligible);
+        const jobs = range(from, to).filter(job => inspect(job.id, mode).eligible);
         if (!jobs.length) throw new Error('这个范围内没有可补图的角色回复');
         validate(mode);
         cancelled = false;
@@ -96,7 +98,7 @@ export function createImageBackfillUI({ controller, getContext, modal, esc, apiL
         unsubscribe(); box?.closeModal();
         const previous = controller.snapshot(), last = Math.max(0, (getContext().chat?.length || 0) - 1);
         box = modal(`<h3 class="pc-h3">补未生图楼层</h3>
-          <div class="pc-hint">按聊天 # 编号填写，起止楼层均包含。已有图片和正在生成的楼层会跳过，隐藏的角色回复也可补图。</div>
+          <div class="pc-hint">按聊天 # 编号填写，起止楼层均包含。已有所选类型图片的楼层会跳过，普通插图和漫画分别补缺。正在生成的楼层会跳过，隐藏的角色回复也可补图。</div>
           <label class="pc-label">补图类型</label><select class="pc-input" data-backfill-mode><option value="ill">普通插图</option><option value="comic">漫画</option></select>
           <div style="display:flex;gap:12px;flex-wrap:wrap"><label style="flex:1;min-width:100px">起始楼层<input class="pc-input" style="width:100%;box-sizing:border-box" type="number" min="0" step="1" inputmode="numeric" data-backfill-from value="${previous.from ?? 0}"></label><label style="flex:1;min-width:100px">结束楼层<input class="pc-input" style="width:100%;box-sizing:border-box" type="number" min="0" step="1" inputmode="numeric" data-backfill-to value="${previous.to ?? last}"></label></div>
           <p class="pc-hint" data-backfill-api></p><p class="pc-hint" data-backfill-preview></p>
@@ -108,7 +110,7 @@ export function createImageBackfillUI({ controller, getContext, modal, esc, apiL
         function preview() {
             const { from, to, mode } = options();
             find('[data-backfill-api]').textContent = `文字 AI · ${apiLabel(mode)}。缺少画面方案时调用，出图沿用当前生图设置，会消耗相应额度。`;
-            try { const counts = controller.preview(from, to); find('[data-backfill-preview]').textContent = `可补 ${counts.candidates} 楼 · 已有图 ${counts.images} 楼 · 生成中 ${counts.busy} 楼`; }
+            try { const counts = controller.preview(from, to, mode); find('[data-backfill-preview]').textContent = `可补 ${counts.candidates} 楼 · 已有${mode === 'comic' ? '漫画' : '普通插图'} ${counts.images} 楼 · 生成中 ${counts.busy} 楼`; }
             catch (error) { find('[data-backfill-preview]').textContent = error.message; }
         }
         function render(state) {

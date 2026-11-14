@@ -144,6 +144,35 @@ for (const [label, factory] of [['源码', createImageBackfill], ['发布代码'
     assert.equal(comic.status(0).images, 1);
     assert.equal(comicBlocks(chat[1].mes).length, 1);
     comic.stop();
+
+    // 同一楼的漫画与普通插图分别补缺，预览和实际调度使用相同类型。
+    const typedChat = [reply(), reply(), reply(), reply({ mes: '角色走进咖啡馆。![正文图](existing.png)' })];
+    const illustrations = [0, 1, 1, 0], comics = [1, 0, 1, 0], typedCalls = [];
+    let comicBusy = false;
+    const typed = factory({
+        getContext: () => ({ chatId: 'typed-fixture', chat: typedChat }),
+        planner: { status: () => ({}), backfill: async id => { typedCalls.push(['ill', id]); illustrations[id]++; } },
+        marker: { status: id => ({ images: illustrations[id], busy: false, tokens: 0 }) },
+        comic: { status: id => ({ images: comics[id], busy: comicBusy }), adapt: async id => { typedCalls.push(['comic', id]); comics[id]++; } },
+    });
+    assert.equal(typed.preview(0, 3, 'ill').candidates, 1, '仅有漫画可补普通插图');
+    assert.equal(typed.preview(0, 3, 'comic').candidates, 2, '仅有普通插图及内嵌图可补漫画');
+    comicBusy = true;
+    assert.equal(typed.preview(0, 0, 'ill').busy, 1, '另一类型在途仍保护楼层');
+    report = await typed.start({ from: 0, to: 0, mode: 'ill' });
+    assert.equal(report.rows[0].reason, '正在生成');
+    comicBusy = false;
+    report = await typed.start({ from: 0, to: 3, mode: 'ill' });
+    assert.equal(report.rows[0].status, 'done');
+    assert(report.rows.slice(1).every(row => row.reason === '已有普通插图'));
+    report = await typed.start({ from: 0, to: 3, mode: 'comic' });
+    assert.equal(report.rows[0].reason, '已有漫画');
+    assert.equal(report.rows[1].status, 'done');
+    assert.equal(report.rows[2].reason, '已有漫画');
+    assert.equal(report.rows[3].status, 'done');
+    assert.deepEqual(typedCalls, [['ill', 0], ['comic', 1], ['comic', 3]]);
+    assert.equal(typed.preview(0, 3, 'ill').candidates, 0);
+    assert.equal(typed.preview(0, 3, 'comic').candidates, 0);
     console.log('PASS ' + label + ' 补图范围、隐藏楼、旧标记、重试、候选、停止、切聊天、忙碌保护与漫画正式控制器');
 }
 for (const text of ["globalThis.__zhikuBackfill = backfillUI", 'backfill.chatChanged(); selectedImages.reset()', "fn: 'ill'", "fn: 'comic'", 'data-act="image-backfill"']) assert(runtime.includes(text), text);
