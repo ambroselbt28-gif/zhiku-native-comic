@@ -151,6 +151,55 @@ function createImageBackfillUI({ controller, getContext, modal, esc, apiLabel })
 const COMIC_BLOCK = /<image\b[^>]*>([\s\S]*?)<\/image>/gi;
 const PLAN_BLOCK = /<comic_plan\b[^>]*>([\s\S]*?)<\/comic_plan>/gi;
 
+// 参考柏宝绘分镜风格与留白选项，规则按智库 @page 协议实现。
+const COMIC_PANEL_STYLES = [
+    { id:'universal', label:'通用映画', description:'按剧情安排景别、主次与画格节奏。', rule:'' },
+    { id:'eromanga', label:'大格特写', description:'以大画格呈现核心互动，搭配神态、手部或道具特写。', rule:'用一处较大的主画格交代人物互动和空间关系，在边角安排少量神态、手部接触或关键道具的特写切入。边框可随动作作斜切，特写对象以剧情为依据。' },
+    { id:'shounen', label:'少年热血', description:'放大关键动作，以斜切画格和动势线突出冲击。', rule:'把关键动作安排在较大的画格中，多格时可用斜切边框衔接动作。根据实际动作使用 speed lines、motion lines 或 emphasis lines，人物动作和冲击点保持清晰。' },
+    { id:'seinen', label:'悬疑推理', description:'用横向长格、线索和细微表情积累悬念。', rule:'用横向长格建立场景，再用眼神、微表情和关键线索特写组织揭示过程。通过画格大小和节奏表现停顿，环境保持克制。' },
+    { id:'yonkoma', label:'经典四格', description:'每页固定四格，按起、承、转、合推进。', rule:'每页严格四格，@page 写 4 panels, vertical layout。以四个规整、大小均衡的矩形自上而下排列，依次承载铺垫、发展、转折和收束。最后一格落在当前剧情的结论或反应上。' },
+    { id:'shoujo', label:'恋爱少女', description:'纵长人物格与表情特写，辅以柔和装饰和情绪留白。', rule:'使用纵长人物格和表情特写突出情绪变化，可用花卉、光点和柔和装饰组织画框，必要时使用 ornate border、falling petals。人物姿态和视线关系以剧情为依据，装饰服从所选留白方案。' },
+    { id:'slice', label:'轻松日常', description:'画格稳定、间距舒缓，突出生活细节和自然反应。', rule:'以规整横格和均匀间距呈现生活细节、人物互动及细微反应，保持舒缓节奏。画格边界稳定，主次按事件安排，使用平直边框。' },
+    { id:'comedy', label:'喜剧日常', description:'通过对切和夸张反应形成紧凑的喜剧节奏。', rule:'用规整画格组织动作与反应的快速对切，交替呈现普通表情、夸张反应和吐槽。保持人物关系、动作对象和笑点清楚，背景适度简化，重点反应可加 emphasis lines。' },
+];
+
+const COMIC_GUTTERS = [
+    { id:'follow', label:'按剧情安排', description:'由本页场景和画格布局决定留白。', rule:'' },
+    { id:'bleed', label:'天地出血', description:'上下贴近页边，行内紧凑，跨行留出节奏间隔。', rule:'页顶和页底的关键画面延伸到页边。同行画格间距较窄，跨行间距适当放宽，可按剧情安排单侧出血，并在 @page 用英文写清边缘方向。' },
+    { id:'boxed', label:'全封闭内框', description:'画格收在均匀的外白边里。', rule:'所有画格位于均匀的四周外白边内，使用 white border 和清楚的画格边界。@page 明确写出页面外白边，全部画格保持在内框范围。' },
+    { id:'fullbleed', label:'沉浸全出血', description:'画面延伸到四周页边，通过内部边界区分画格。', rule:'整页画面延伸到四周边缘，使用 full bleed。相邻画格通过清晰的分隔线或构图边界区分，@page 明确写出全页出血布局。' },
+    { id:'ink', label:'纯黑线无白边', description:'画格紧密相接，以粗黑线分隔。', rule:'画格紧密相接，四周外沿与格间均采用零白色间距。使用 black border，以清楚的粗黑墨线切分画格，@page 明确写出密接布局。' },
+];
+
+function resolveComicLayout(options = {}) {
+    const style = COMIC_PANEL_STYLES.find(item => item.id === options.panelStyle) || COMIC_PANEL_STYLES[0];
+    const gutter = COMIC_GUTTERS.find(item => item.id === options.gutter) || COMIC_GUTTERS[0];
+    return { style, gutter, panels:style.id === 'yonkoma' ? '4' : String(options.panels || '') };
+}
+
+function comicLayoutInstructions(options = {}) {
+    const { style, gutter } = resolveComicLayout(options);
+    const rules = ['【漫画分镜与留白】',
+        '按剧情需要选择远景、中景和近景。每格定格一个时刻，人物、道具、衣着和接触状态按正文跨格连续。位置与大小用英文写入 @page，并让 @panel 与人物的所属画格保持一致。',
+        '普通多列页面按从右到左、再从上到下的顺序组织阅读。页数沿用本次任务，每页格数沿用本次选择，经典四格固定每页四格。格形和装饰服从单独选择的留白方案。'];
+    if (style.rule) rules.push(`所选分镜风格为「${style.label}」。${style.rule}`);
+    if (gutter.rule) rules.push(`所选留白方案为「${gutter.label}」。${gutter.rule}`);
+    return rules.join('\n');
+}
+
+function comicLayoutExample(options = {}) {
+    const count = resolveComicLayout(options).style.id === 'yonkoma' ? 4 : 2;
+    const positions = count === 4 ? ['top quarter','upper middle quarter','lower middle quarter','bottom quarter'] : ['top half','bottom half'];
+    const pages = [
+        { name:'等雨', scene:'cafe interior, rain on window', actions:['sitting, looking at window','holding a cup','putting cup on table','standing up'] },
+        { name:'雨停后离开', scene:'wet street, street lights', actions:['opening cafe door','walking on sidewalk','looking at street sign','walking away'] },
+    ];
+    return '\n\n多页格式示例（正文包含等雨和离开两个剧情片段）：\n' + pages.map((page, index) => {
+        const panels = positions.map((position, panel) => `@panel P${panel + 1}\n${position}, medium shot, ${page.scene}\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, ${page.actions[panel]}`).join('\n');
+        return `<comic_plan>第 ${index + 1} 页，剧情片段「${page.name}」，${count} 格。</comic_plan>\n<image>\n@page\nrating:general, 1boy, comic page, ${count} panels, vertical layout, ${page.scene}\n${panels}\nText: 「${index ? '回家吧。' : '又下雨了。'}」\n</image>`;
+    }).join('\n\n');
+}
+
 /** 给漫画默认用的负面：不含网点、分格、文字、留白这些漫画要用的东西 */
 const COMIC_DEFAULT_NEGATIVE = 'lowres, artistic error, worst quality, bad quality, jpeg artifacts, very displeasing, watermark, signature, logo, bad anatomy, bad hands';
 
@@ -303,7 +352,10 @@ function panelBoxes(data) {
     const colOf = t => /\bleft\b/.test(t) ? 0 : /\bright\b/.test(t) ? 2 : null;
     const info = panels.map(p => { const t = words(p); return { row: rowOf(t), col: colOf(t) }; });
     let rows = [];
-    if (info.every(x => x.row !== null)) {
+    const base = String(data.page?.base || '');
+    if (n === 4 && info.every(x => x.col === null) && /\bvertical layout\b/i.test(base) && !/2\s*[x×]\s*2|grid/i.test(base)) {
+        rows = [[0], [1], [2], [3]];
+    } else if (info.every(x => x.row !== null)) {
         const keys = [...new Set(info.map(x => x.row))].sort((a, b) => a - b);
         rows = keys.map(k => info.map((x, i) => x.row === k ? i : -1).filter(i => i >= 0));
     } else if (info.every(x => x.col === null) && n === 4 && /2\s*[x×]\s*2|grid|four[- ]panel/i.test(String(data.page?.base || ''))) {
@@ -376,7 +428,7 @@ function captionSource(v, inner) {
 }
 
 /** 「让 AI 重写本页」的请求 */
-function rewriteRequest(message, page, requirement) {
+function rewriteRequest(message, page, requirement, layout = {}) {
     const blocks = comicBlocks(message);
     const plan = roundPlan(message);
     const refs = blocks.map(b => `<page_reference page="${b.page}">\n${b.plan ? `<comic_plan>\n${b.plan}\n</comic_plan>\n` : ''}<image>\n${b.inner}\n</image>\n</page_reference>`).join('\n\n');
@@ -384,7 +436,8 @@ function rewriteRequest(message, page, requirement) {
         + '只输出一组 <comic_plan>…</comic_plan> 和一组 <image>…</image>，不要输出其他页、整轮规划或任何解释。'
         + '<image> 用分段文本协议：@page（分级、实际人数词、页面形态、画格数量、布局、留白、光影、文字标签）→ 每格 @panel P1、P2…（位置大小构图环境）→ 格内每个可见人物 @character C1…（boy/girl/other、完整外貌衣着、动作表情），可选 @negative、@non_character；'
         + '每格中每个可见人物单独写一条 @character，同一人物跨格出现时分别写；每页人物条目合计最多 22 条。每格位置和人物对白归属写清楚。'
-        + '需要画进图里的原句写在该段末尾的「Text: 」后面。人物段用不带数字的 boy、girl 或 other。';
+        + '需要画进图里的原句写在该段末尾的「Text: 」后面。人物段用不带数字的 boy、girl 或 other。'
+        + '\n\n' + comicLayoutInstructions(layout);
     const user = `<comic_reference readonly="true">\n${plan ? `<thinking>\n${plan}\n</thinking>\n\n` : ''}${refs}\n</comic_reference>\n\n只重写第 ${page} 页。要求：${String(requirement || '').trim() || '保持人物、衣着、场景和剧情连续，优化这一页的分镜构图与提示词。'}`;
     return { system, user };
 }
@@ -412,7 +465,9 @@ function isComicReply(message) {
         && !message.extra?.type && !Array.isArray(message.extra?.tool_invocations);
 }
 /** 「把这一楼画成漫画」的请求：读这一楼的正文，改编成几页漫画分镜 */
-function adaptRequest(story, { pages = 0, panels = '', cast = '', before = '', color = 'color', extra = '' } = {}) {
+function adaptRequest(story, { pages = 0, panels = '', cast = '', before = '', color = 'color', extra = '', panelStyle = 'universal', gutter = 'follow' } = {}) {
+    const layout = { panelStyle, gutter, panels };
+    panels = resolveComicLayout(layout).panels;
     const system = '你是漫画分镜导演，把小说 / 角色扮演的正文改编成日式漫画页，给 NovelAI V5 出图用。'
         + '先按时间顺序识别正文中的独立剧情事件、场景变化和关键转折，每个剧情片段单独画一页。同一片段内的连续动作再拆成该页的多个画格。一条正文可以输出多页，每一页对应一张独立图片。'
         + '自动页数时，识别出几个剧情片段就输出几组页面；有多个片段就必须输出多组，不要把不同剧情都塞进一张图，也不要只画开头。每页的 <comic_plan> 写明页码、对应的剧情片段和画格安排。'
@@ -423,8 +478,8 @@ function adaptRequest(story, { pages = 0, panels = '', cast = '', before = '', c
         + '要画进图里的对白、旁白、拟声，写在对应段落末尾单独一行「Text: 」后面，用正文的语言，一格不超过两句；一段只写一个「Text: 」，几句话都接在它后面换行写。'
         + '每个 @panel 第一行先写这格在页面上的位置（top left、top right、bottom half、middle 这类英文词），插件按它把对白叠到对应的格子里。'
         + '标签用英文 NovelAI / Danbooru 标签，逗号隔开；不要写画师名和画风（画风另外加）。人物外貌照下面给的角色资料写，前后页保持一致。'
-        + '\n\n多页格式示例（正文包含等雨和离开两个剧情片段）：\n<comic_plan>第 1 页，剧情片段一：在咖啡馆等雨。P1 窗外下雨；P2 他看向窗外。</comic_plan>\n<image>\n@page\nrating:general, 1boy, comic page, 2 panels, vertical layout, rainy night, warm indoor light\n@panel P1\ntop half, wide shot, cafe interior, rain on window\n@panel P2\nbottom half, close-up\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, sitting, looking outside, melancholic\nText: 「又下雨了。」\n</image>'
-        + '\n\n<comic_plan>第 2 页，剧情片段二：雨停后离开。P1 他走出门；P2 他沿街离去。</comic_plan>\n<image>\n@page\nrating:general, 1boy, comic page, 2 panels, vertical layout, night, wet street, street lights\n@panel P1\ntop half, medium shot, cafe entrance\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, opening door\n@panel P2\nbottom half, wide shot, wet street\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, walking away\nText: 「回家吧。」\n</image>';
+        + '\n\n' + comicLayoutInstructions(layout)
+        + comicLayoutExample(layout);
     const user = (cast ? `<characters>\n${cast}\n</characters>\n\n` : '')
         + (before ? `<previous readonly="true">\n${before}\n</previous>\n\n` : '')
         + `<story>\n${story}\n</story>\n\n把 <story> 改编成${pages ? ` ${pages} 页` : '若干页（按剧情片段拆页，一个剧情片段一张，多个剧情片段必须输出多组 <comic_plan> + <image>，从开头一直画到结尾）'}${color === 'mono' ? '黑白网点' : '彩色'}漫画，${panels ? `每页 ${panels} 格` : '每页 2–5 格'}。只画 <story> 里发生的事${pages ? `，${pages} 页要把整段剧情从头画到尾，按剧情先后分配` : ''}。`
@@ -450,6 +505,15 @@ function parseAdapt(text) {
     if (/<comic_plan\b/i.test(t.slice(last))) throw new Error('漫画分镜输出没有写完，最后一段剧情只有规划、缺少漫画页，请提高回复长度上限后重试');
     if (!out.length) throw new Error('AI 没有按格式写出漫画页（缺少 <image>@page …</image>）');
     return out.join('\n\n');
+}
+
+/** 新生成的经典四格分镜在保存与出图前检查格数。 */
+function validateComicLayout(text, layout = {}) {
+    if (resolveComicLayout(layout).style.id !== 'yonkoma') return;
+    for (const block of comicBlocks(text)) {
+        const parsed = parseComicPage(block.inner);
+        if (parsed.panelTexts.length !== 4) throw new Error(`经典四格需要每页 4 格，第 ${block.page} 页返回了 ${parsed.panelTexts.length} 格，请重新生成分镜`);
+    }
 }
 
 /** 把消息里的第 page 页换成新写的 */
@@ -935,8 +999,10 @@ function createComicController(deps) {
             if (act === 'ai') {
                 t.disabled = true; say('AI 正在重写这一页…');
                 try {
-                    const { system, user } = rewriteRequest(srcOf(msg), block.page, box.querySelector('[data-w-req]').value);
+                    const layout = { panelStyle:opts().comicPanelStyle, gutter:opts().comicGutter, panels:opts().comicPanels };
+                    const { system, user } = rewriteRequest(srcOf(msg), block.page, box.querySelector('[data-w-req]').value, layout);
                     const out = parseRewrite(await askLLM(system, user, { maxTokens: 6000 }));
+                    validateComicLayout(`<image>${out.image}</image>`, layout);
                     if (!snap.current()) throw new Error('聊天或原文已变化，本次改写未写入');
                     box.closeModal();
                     await applyNewPage(id, block, out, snap);
@@ -983,6 +1049,7 @@ function createComicController(deps) {
             const neg = o.comicNeg ?? COMIC_DEFAULT_NEGATIVE;
             const posBad = comicPositiveConflicts(st.pos), negBad = comicNegativeConflicts([st.neg, neg].join(', '), { monochrome: o.comicColor === 'mono' });
             const tavern = deps.naiMode?.() === 'tavern';
+            const layout = resolveComicLayout({ panelStyle:o.comicPanelStyle, gutter:o.comicGutter, panels:o.comicPanels });
             root.innerHTML = `${box ? '<div class="pc-row-between"><h3 class="pc-h3" style="margin:0">漫画设置</h3><button class="pc-btn small" data-cx>好了</button></div>' : ''}
               ${tavern ? '<div class="pc-banwarn">⚠ 现在用的是酒馆里的 key：画不了漫画（分人物），到 NovelAI 设置里改成自己填 key 或第三方站点。</div>' : ''}
               <div class="pc-label">开关</div>
@@ -996,6 +1063,10 @@ function createComicController(deps) {
               <select class="pc-input" data-cstyle><option value="">跟正文画师串一样${d.active ? `（现在是「${esc(M.ticketName(d, d.active))}」）` : '（还没选）'}</option>
                 ${groups.map(g => `<option value="group:${esc(g.id)}" ${o.comicStyle === 'group:' + g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>
               <div class="pc-hint">漫画单独用一个画师串，不影响聊天插图。${posBad.length ? `<br><b>⚠ 这串里有人数词：${posBad.map(esc).join('、')}</b>，人数应该由每页自己写，建议去掉。` : ''}</div>
+              <label class="pc-field"><span>分镜风格</span><select class="pc-input" data-clayout="comicPanelStyle">${COMIC_PANEL_STYLES.map(style => `<option value="${style.id}" ${layout.style.id === style.id ? 'selected' : ''}>${esc(style.label)}</option>`).join('')}</select></label>
+              <div class="pc-hint">${esc(layout.style.description)}</div>
+              <label class="pc-field"><span>留白方案</span><select class="pc-input" data-clayout="comicGutter">${COMIC_GUTTERS.map(gutter => `<option value="${gutter.id}" ${layout.gutter.id === gutter.id ? 'selected' : ''}>${esc(gutter.label)}</option>`).join('')}</select></label>
+              <div class="pc-hint">${esc(layout.gutter.description)} 新生成分镜和本页 AI 重写使用当前选择。已有漫画可点「重新改编这一楼」采用新布局。</div>
               <div class="pc-label">颜色</div>
               ${seg('comicColor', [['color', '彩色'], ['mono', '黑白网点']], 'color')}
               <div class="pc-label">对白怎么出现</div>
@@ -1010,7 +1081,7 @@ function createComicController(deps) {
               <div class="pc-label">「画成漫画」每楼画几页</div>
               ${seg('comicPages', [[0, '按剧情'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']], 0)}
               <div class="pc-label">每页几格</div>
-              ${seg('comicPanels', [['', '自动'], ['1–2', '1–2'], ['3–4', '3–4'], ['5–6', '5–6']], '')}
+              ${layout.style.id === 'yonkoma' ? '<div class="pc-hint">经典四格固定每页 4 格，按起、承、转、合排列。</div>' : seg('comicPanels', [['', '自动'], ['1–2', '1–2'], ['3–4', '3–4'], ['5–6', '5–6']], '')}
               <div class="pc-hint">「按剧情」时，每个剧情事件或场景转折单独一张漫画页，一条正文可以生成多张。每张页内再安排多个分格，按顺序覆盖整段正文。也可指定固定页数。</div>
               <div class="pc-hint">已有分镜需要重新拆页时，点楼层下的「重新改编这一楼」。「保留分镜，整楼重画」沿用已存页数，逐页生成新版本。</div>
               <label class="pc-field pc-mt-s"><span>给 AI 的改编要求（可不填）</span><textarea class="pc-textarea small" data-cstr="comicExtra" placeholder="比如：多用特写和留白；对白少一点；每页最多 3 格；不要画 user 的脸">${esc(o.comicExtra || '')}</textarea></label>
@@ -1028,6 +1099,7 @@ function createComicController(deps) {
         root.addEventListener('change', ev => {
             const t = ev.target;
             if (t.dataset.cw) { opts()[t.dataset.cw] = t.checked; commit(); draw(); renderAll(); }
+            else if (t.dataset.clayout) { opts()[t.dataset.clayout] = t.value; commit(); draw(); }
             else if (t.matches('[data-cstyle]')) { opts().comicStyle = t.value; commit(); draw(); }
         });
         root.addEventListener('input', ev => { const t = ev.target; if (t.dataset.cstr) { opts()[t.dataset.cstr] = t.value; commit(); } });
@@ -1053,9 +1125,11 @@ function createComicController(deps) {
         try {
             const prevMsg = (c.chat || []).slice(0, id).reverse().find(m => m && !m.is_system && m.extra?.zhikuComicSrc);
             const before = prevMsg ? comicBlocks(srcOf(prevMsg)).slice(-1).map(b => b.inner).join('') : '';
-            const { system, user } = adaptRequest(story, { pages: pages || Number(opts().comicPages) || 0, panels: opts().comicPanels || '', cast: deps.castText?.() || '', before, color: opts().comicColor === 'mono' ? 'mono' : 'color', extra: opts().comicExtra || '' });
+            const layout = { panelStyle:opts().comicPanelStyle, gutter:opts().comicGutter, panels:opts().comicPanels || '' };
+            const { system, user } = adaptRequest(story, { pages: pages || Number(opts().comicPages) || 0, ...layout, cast: deps.castText?.() || '', before, color: opts().comicColor === 'mono' ? 'mono' : 'color', extra: opts().comicExtra || '' });
             const want = pages || Number(opts().comicPages) || 6;
             const out = parseAdapt(await askLLM(system, user, { maxTokens: Math.min(16000, 3000 + 1800 * want) }));
+            validateComicLayout(out, layout);
             if (!snap.current()) return;
             const restore = checkpoint(msg), removed = [];
             setSrc(msg, out);
@@ -1973,7 +2047,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.54-native.4（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.54-native.5（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2022,7 +2096,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.54-native.4';
+globalThis.__PC_VERSION = '0.8.54-native.5';
 
 // ───── model.js ─────
 const __mod_model = (() => {

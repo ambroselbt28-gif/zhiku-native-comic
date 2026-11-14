@@ -62,6 +62,8 @@ export function applyComic(source) {
 `);
     patch("    const onChat = () => { selectedImages.reset(); return setTimeout(() => {", "    const onChat = () => { selectedImages.reset(); return setTimeout(() => { globalThis.__zhikuComic?.renderAll({ chatChanged: true });");
 
-    const helper = fs.readFileSync(new URL('../src/comic.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+    const layouts = fs.readFileSync(new URL('../src/comic-layouts.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n').replace(/^export /gm, '');
+    const helper = fs.readFileSync(new URL('../src/comic.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n').replace(/^import .*;\n/gm, '').replace(/^export /gm, '')
+        .replace('/** 给漫画默认用的负面', layouts + '\n/** 给漫画默认用的负面');
     return helper + '\n' + s;
 }

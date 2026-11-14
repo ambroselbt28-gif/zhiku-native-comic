@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { createComicController, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor } from './runtime-comic.js';
+import { createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
     if (!value) throw new Error(name);
@@ -44,14 +44,17 @@ context.chat[79] = message;
 const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0uoAAAAASUVORK5CYII=';
 const requests = [];
 let aiCalls = 0;
+const aiRequests = [];
+let aiResponse = page;
 let drawBarrier = null;
 const controller = createComicController({
     document, getContext: () => context, getData: () => data, commit() {},
     esc: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'),
-    askLLM: async () => { aiCalls++; return page; },
+    askLLM: async (system, user) => { aiCalls++; aiRequests.push({system,user}); return aiResponse; },
     generatePage: async request => { requests.push(request); if (drawBarrier) await drawBarrier; return { image }; },
     storeImage: async () => ({ url: image }), resolveUrl: value => value,
     notify() {}, notifyError: value => { throw new Error(value); },
+    modal: html => { const box=document.createElement('section');box.style.cssText='max-width:680px;margin:auto';box.innerHTML=html;box.closeModal=()=>box.remove();document.body.append(box);return box; },
 });
 globalThis.__zhikuComic = controller;
 document.addEventListener('click', onChatClick, true);
@@ -136,6 +139,23 @@ window.stcrSelfTest = async () => {
     promptBox.querySelector('[data-act="illprompt-preview"]').click(); await nextTurn();
     check('保存和预览使用同一份互动提示词', previewRequest.system === promptOptions.illustPrompt && previewRequest.system.includes('source#hug'));
     check('互动规则编辑器适配手机宽度', document.documentElement.scrollWidth <= window.innerWidth);
+    check('漫画设置显示完整分镜和留白选择', document.querySelector('[data-clayout="comicPanelStyle"]').options.length === 8 && document.querySelector('[data-clayout="comicGutter"]').options.length === 5);
+    data.options.comicPanels = '1–2';
+    const setLayout = (key, value) => { const select=document.querySelector(`[data-clayout="${key}"]`);select.value=value;select.dispatchEvent(new Event('change',{bubbles:true})); };
+    setLayout('comicPanelStyle','yonkoma'); setLayout('comicGutter','boxed');
+    check('经典四格接管格数并保存留白选择', data.options.comicPanelStyle === 'yonkoma' && data.options.comicGutter === 'boxed' && !document.querySelector('[data-cs="comicPanels"]'));
+    aiResponse = comicLayoutExample({panelStyle:'yonkoma'}).replaceAll('comic page,','white border, comic page,');
+    context.chat[83] = {name:'合成角色',mes:'角色在咖啡馆等雨，之后离开咖啡馆。'};
+    const fourRow=document.createElement('div');fourRow.className='mes';fourRow.setAttribute('mesid','83');fourRow.innerHTML='<div class="mes_text">合成四格故事</div>';document.querySelector('#chat').append(fourRow);
+    await controller.adapt(83);
+    check('分镜与留白进入实际 AI 请求', aiRequests.at(-1).system.includes('所选分镜风格为「经典四格」') && aiRequests.at(-1).system.includes('所选留白方案为「全封闭内框」') && aiRequests.at(-1).user.includes('每页 4 格'));
+    check('经典四格经过编译出多张漫画页', fourRow.querySelectorAll('.pc-comic-page').length === 2 && requests.at(-1).positive.includes('4 panels') && requests.at(-1).positive.includes('white border'));
+    fourRow.querySelector('img').click();fourRow.querySelector('[data-cwork]').click();
+    document.querySelector('[data-w="ai"]').click();await nextTurn();
+    check('本页 AI 重写也带当前分镜与留白', aiRequests.at(-1).user.includes('只重写第 1 页') && aiRequests.at(-1).system.includes('所选分镜风格为「经典四格」') && aiRequests.at(-1).system.includes('所选留白方案为「全封闭内框」'));
+    setLayout('comicPanelStyle','shounen');
+    check('切回其他风格恢复原每页格数选择', document.querySelector('[data-cs="comicPanels"][data-v="1–2"]').classList.contains('on') && data.options.comicPanels === '1–2');
+    check('分镜风格设置在手机宽度内显示', document.documentElement.scrollWidth <= window.innerWidth);
     return checks;
 };
 try {
