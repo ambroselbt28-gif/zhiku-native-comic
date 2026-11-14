@@ -2220,7 +2220,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.54-native.7（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.54-native.8（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2269,7 +2269,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.54-native.7';
+globalThis.__PC_VERSION = '0.8.54-native.8';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3584,7 +3584,7 @@ function netError(e) {
     if (!(e instanceof TypeError) || !/fetch|network|load failed/i.test(String(e.message))) return e;
     const mode = settings().naiMode;
     const where = mode === 'site' ? '第三方站点（站点可能挂了，或者地址填错了）' : mode === 'tavern' ? '酒馆后端（酒馆可能断开了，刷新页面试试）' : 'NovelAI（image.novelai.net）';
-    return Object.assign(new Error(`连不上${where}，请求没发出去（${e.message}）。检查网络和 VPN，换个节点或稍后再试`), { status: 0 });
+    return Object.assign(new Error(`连不上${where}，未收到可读取的响应（${e.message}）。请检查 TT 是否已加入手机代理的应用名单，以及当前网络连接`), { status: 0 });
 }
 function normalizeNaiChars(chars, comic = false) {
     const snap = v => { const n = Number(v); return Number.isFinite(n) ? +Math.min(0.9, Math.max(0.1, Math.round((n - 0.1) / 0.2) * 0.2 + 0.1)).toFixed(1) : 0.5; };
@@ -4242,13 +4242,13 @@ async function testConnection() {
             return { ok: true, text: '第三方站点没法提前检查，直接去生图页试一张' };
         }
         const key = authKey();
-        const r = await http('https://api.novelai.net/user/subscription', { headers: { Authorization: 'Bearer ' + key } });
+        const r = await http('https://image.novelai.net/user/subscription', { headers: { Authorization: 'Bearer ' + key } });
         if (r.status === 401) return { ok: false, text: 'key 不对' };
         if (!r.ok) return { ok: false, text: `NovelAI 返回 ${r.status}` };
         return { ok: true, text: '能用' + anlasText(await r.json()) };
     } catch (e) {
-        // 「Failed to fetch」：查余额的 api.novelai.net 被网络或浏览器拦了。生图走 image.novelai.net，不一定受影响
-        if (s.naiMode === 'key' && e instanceof TypeError) return { ok: true, warn: true, text: '查不到余额：这台设备连不上 api.novelai.net（网络或浏览器拦了）。生图走的是另一个地址，去生图页试一张，能出图就是能用' };
+        // 连接测试使用图像服务的订阅接口，网络异常时明确标为验证失败。
+        if (s.naiMode === 'key' && e instanceof TypeError) return { ok: false, text: '连接测试失败：无法完成 image.novelai.net 的订阅查询（' + e.message + '）。Key 和生图状态尚待验证，请检查 TT 的联网或代理设置' };
         return { ok: false, text: '连不上：' + (e?.message || e) };
     }
 }
