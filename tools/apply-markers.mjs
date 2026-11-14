@@ -37,7 +37,7 @@ export function applyMarkers(source) {
         if(!s.includes('/* reference-marker-ui */'))s=s.replace('    DOC.head.appendChild(markerStyle);', '    /* reference-marker-ui */ markerStyle.textContent += '+JSON.stringify(referenceCss)+';\n    DOC.head.appendChild(markerStyle);');
         return s;
     }
-    const logic=fs.readFileSync(new URL('../src/marker-generation.js',import.meta.url),'utf8').replace(/\r\n/g,'\n').replace(/^export /gm,'');
+    const logic=fs.readFileSync(new URL('../src/marker-generation.js',import.meta.url),'utf8').replace(/\r\n/g,'\n').replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
     if(source.includes('const MARKER_REGEX_ID =')) {
         const start=source.indexOf('// Marker-triggered generation');
         const end=source.indexOf('const __mod_marker=',start);

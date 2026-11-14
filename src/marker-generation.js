@@ -1,5 +1,6 @@
 // Marker-triggered generation and prompt-only filtering. No chat LLM request.
 // 智库插进楼层的图片（<img class="pc-chat-img"> / alt="画师库生成"）也不发给聊天 AI
+import { isComicReply } from './comic.js';
 export const CHAT_IMG_PATTERN='<img\\b[^>]*(?:pc-chat-img|画师库生成)[^>]*>';
 export const MARKER_REGEX_ID = '72c57f73-46af-46ac-a28e-bf31b131332a';
 export const MARKER_DISPLAY_ID = '6ba93a8e-cabb-494c-a7e8-6c9dfcf5fb80';
@@ -238,7 +239,7 @@ export function createMarkerController({context,getData,generate,upload,notify,d
     const chatKey=c=>String(c.getCurrentChatId?.() ?? c.chatId ?? '')+'|'+String(c.characterId ?? '')+'|'+String(c.groupId ?? '');
     async function process(id,{manual=false,tokenIndex=null,tokenIndices=null,promptOverride=null}={}) {
         const c=context(),msg=c.chat?.[id],cfg=settings();
-        if(stopped||!msg||msg.is_system||(!manual&&(!cfg.auto||msg.is_user)))return 0;
+        if(stopped||!msg||(msg.is_system&&!(manual&&isComicReply(msg)))||(!manual&&(!cfg.auto||msg.is_user)))return 0;
         const source=String(msg.mes||''),swipe=msg.swipe_id,chat=chatKey(c),all=parseImageMarkers(source,cfg.start,cfg.end);
         if(manual&&tokenIndex===null&&!Array.isArray(tokenIndices)&&all.length>1){notify('请点击具体提示词旁的生成按钮，一次只生成所选图片','info');decorate(id);return 0;}
         const selected=Array.isArray(tokenIndices)?all.filter((_,i)=>tokenIndices.includes(i)):tokenIndex===null?all:all.filter((_,i)=>i===tokenIndex);
@@ -273,11 +274,17 @@ export function createMarkerController({context,getData,generate,upload,notify,d
                     records[key]={url:String(url),prompt,versions};
                     try{await c.saveChat();}catch(e){if(old)records[key]=old;else delete records[key];if(!hadRecords&&!Object.keys(records).length)delete msg.extra.zhikuImages;if(!hadExtra&&!Object.keys(msg.extra).length)delete msg.extra;throw e;}
                     failed.get(msg)?.delete(key);return 1;
-                }catch(e){let errors=failed.get(msg);if(!errors){errors=new Set();failed.set(msg,errors);}errors.add(key);notify(e.message||String(e),'error');return 0;}
+                }catch(e){let errors=failed.get(msg);if(!errors){errors=new Map();failed.set(msg,errors);}errors.set(key,e.message||String(e));notify(e.message||String(e),'error');return 0;}
             }).finally(()=>{inflight.delete(flight);map.delete(key);if(!map.size)pending.delete(msg);if(!stopped&&chatKey(context())===chat)decorate(id);});
             entry.job=job;queue=job.catch(()=>{});return job;
         });
         decorate(id);return (await Promise.all(jobs)).reduce((a,b)=>a+b,0);
     }
-    return {settings,syncRegex,process,decorate,decorateAll,refresh,applyImageDefault,stop(){stopped=true;for(const timer of holds)clearTimeout(timer);holds.clear();for(const el of overlays)el.remove();overlays.clear();if(doc)doc.querySelectorAll('.pc-image-actions').forEach(el=>el.remove());},idle(){return queue;}};
+    function status(id) {
+        const msg=context().chat?.[id],cfg=settings(),tokens=parseImageMarkers(msg?.mes,cfg.start,cfg.end);
+        const missing=tokens.map((token,i)=>findRecord(msg,token)?.url?-1:i).filter(i=>i>=0);
+        const error=tokens.map(token=>failed.get(msg)?.get(recordKey(msg,token))).filter(Boolean).join('；');
+        return {busy:!!msg&&pending.has(msg),images:tokens.length-missing.length,missing,tokens:tokens.length,error};
+    }
+    return {settings,syncRegex,process,status,decorate,decorateAll,refresh,applyImageDefault,stop(){stopped=true;for(const timer of holds)clearTimeout(timer);holds.clear();for(const el of overlays)el.remove();overlays.clear();if(doc)doc.querySelectorAll('.pc-image-actions').forEach(el=>el.remove());},idle(){return queue;}};
 }

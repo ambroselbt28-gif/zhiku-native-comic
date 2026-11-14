@@ -8,6 +8,142 @@ function setTimeout(fn, delay, ...args) {
     timers.add(id); return id;
 }
 function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
+
+// 只调度当前聊天的楼层，方案生成、出图、保存与在途校验复用原有控制器。
+function createImageBackfill({ getContext, planner, marker, comic, validate = () => {} }) {
+    const listeners = new Set();
+    const chatKey = c => String(c.getCurrentChatId?.() ?? c.chatId ?? '') + '|' + String(c.characterId ?? '') + '|' + String(c.groupId ?? '');
+    let state = { running: false, stopping: false, rows: [], reason: '' };
+    let active = null, cancelled = false, stopped = false;
+    const snapshot = () => ({ ...state, rows: state.rows.map(row => ({ ...row })) });
+    const emit = () => { for (const listener of listeners) listener(snapshot()); };
+    function inspect(id) {
+        const msg = getContext().chat?.[id];
+        if (!isComicReply(msg)) return { eligible: false };
+        const illustration = marker.status(id), pages = comic.status(id);
+        if (!imageStoryText(msg.mes).trim() && !illustration.tokens && !pages.pages) return { eligible: false };
+        const content = [...String(msg.mes || '').matchAll(/<content\b[^>]*>([\s\S]*?)<\/content\s*>/gi)];
+        const body = (content.length ? content.map(block => block[1]).join('\n') : String(msg.mes || ''))
+            .replace(/<(details|script|style|think|thinking|analysis)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+        const inline = /<img\b[^>]*\bsrc\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>]+)/i.test(body) || /!\[[^\]]*\]\(\s*[^\s)]+/.test(body);
+        return { eligible: true, images: illustration.images + pages.images + Number(inline), busy: illustration.busy || pages.busy || planner.status(id).busy };
+    }
+    function range(from, to) {
+        const last = (getContext().chat?.length || 0) - 1;
+        if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || from > to || to > last) throw new Error('请填写当前聊天中有效的起止楼层编号');
+        return getContext().chat.slice(from, to + 1).map((msg, index) => ({ id: from + index, msg, source: msg?.mes, swipe: msg?.swipe_id }));
+    }
+    function preview(from, to) {
+        const rows = range(from, to).map(row => inspect(row.id));
+        return { candidates: rows.filter(row => row.eligible && !row.images && !row.busy).length, images: rows.filter(row => row.eligible && row.images).length, busy: rows.filter(row => row.eligible && row.busy).length };
+    }
+    async function run(jobs, chat, mode) {
+        try {
+            for (const job of jobs) {
+                if (cancelled || stopped) break;
+                if (chatKey(getContext()) !== chat) { state.reason = '聊天已切换，补图已停止'; break; }
+                const row = state.rows.find(row => row.id === job.id);
+                const msg = getContext().chat?.[job.id], before = inspect(job.id);
+                if (msg !== job.msg || msg?.mes !== job.source || msg?.swipe_id !== job.swipe) {
+                    Object.assign(row, { status: 'skipped', reason: '正文或候选回复已变化' }); emit(); continue;
+                }
+                if (!before.eligible || before.images || before.busy) {
+                    Object.assign(row, { status: 'skipped', reason: before.images ? '已有图片' : before.busy ? '正在生成' : '没有角色正文' }); emit(); continue;
+                }
+                row.status = 'working'; emit();
+                try {
+                    if (mode === 'comic') await comic.adapt(job.id);
+                    else {
+                        const markers = marker.status(job.id);
+                        if (markers.tokens) await marker.process(job.id, { manual: true, tokenIndices: markers.missing });
+                        else await planner.backfill(job.id);
+                    }
+                    const now = getContext();
+                    if (chatKey(now) !== chat || now.chat?.[job.id] !== msg || msg.swipe_id !== job.swipe) {
+                        Object.assign(row, { status: 'skipped', reason: '聊天或候选回复已变化' });
+                    } else {
+                        const generated = mode === 'comic' ? comic.status(job.id) : marker.status(job.id);
+                        Object.assign(row, generated.images > 0
+                            ? { status: 'done', reason: `已生成 ${generated.images} 张` }
+                            : { status: 'failed', reason: generated.error || planner.status(job.id).error || '未生成图片，请查看楼层错误和问题记录' });
+                    }
+                } catch (error) { Object.assign(row, { status: 'failed', reason: error?.message || String(error) }); }
+                emit();
+            }
+            if (chatKey(getContext()) !== chat) state.reason = '聊天已切换，补图已停止';
+            else if (cancelled) state.reason = '补图已停止';
+            else if (!stopped) state.reason = '本轮补图完成';
+        } finally {
+            for (const row of state.rows) if (row.status === 'queued') { row.status = 'skipped'; row.reason = '尚未执行'; }
+            state.running = false; state.stopping = false; active = null; emit();
+        }
+        return snapshot();
+    }
+    function start({ from, to, mode = 'ill' }) {
+        if (stopped) throw new Error('补图模块已停用，请刷新智库');
+        if (state.running) return active;
+        if (!['ill', 'comic'].includes(mode)) throw new Error('请选择普通插图或漫画');
+        const jobs = range(from, to).filter(job => inspect(job.id).eligible);
+        if (!jobs.length) throw new Error('这个范围内没有可补图的角色回复');
+        validate(mode);
+        cancelled = false;
+        state = { running: true, stopping: false, mode, from, to, reason: '', rows: jobs.map(job => ({ id: job.id, status: 'queued', reason: '' })) };
+        active = run(jobs, chatKey(getContext()), mode);
+        return active;
+    }
+    function cancel() { if (state.running) { cancelled = true; state.stopping = true; emit(); } }
+    return { start, preview, snapshot, cancel, chatChanged: cancel,
+        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+        stop() { stopped = true; cancel(); listeners.clear(); },
+    };
+}
+
+function createImageBackfillUI({ controller, getContext, modal, esc, apiLabel }) {
+    let box = null, unsubscribe = () => {};
+    function open(mode = 'ill') {
+        unsubscribe(); box?.closeModal();
+        const previous = controller.snapshot(), last = Math.max(0, (getContext().chat?.length || 0) - 1);
+        box = modal(`<h3 class="pc-h3">补未生图楼层</h3>
+          <div class="pc-hint">按聊天 # 编号填写，起止楼层均包含。已有图片和正在生成的楼层会跳过，隐藏的角色回复也可补图。</div>
+          <label class="pc-label">补图类型</label><select class="pc-input" data-backfill-mode><option value="ill">普通插图</option><option value="comic">漫画</option></select>
+          <div style="display:flex;gap:12px;flex-wrap:wrap"><label style="flex:1;min-width:100px">起始楼层<input class="pc-input" style="width:100%;box-sizing:border-box" type="number" min="0" step="1" inputmode="numeric" data-backfill-from value="${previous.from ?? 0}"></label><label style="flex:1;min-width:100px">结束楼层<input class="pc-input" style="width:100%;box-sizing:border-box" type="number" min="0" step="1" inputmode="numeric" data-backfill-to value="${previous.to ?? last}"></label></div>
+          <p class="pc-hint" data-backfill-api></p><p class="pc-hint" data-backfill-preview></p>
+          <div class="pc-actions wrap"><button class="pc-btn dark" data-backfill-start>开始补图</button><button class="pc-btn" data-backfill-stop disabled>停止补图</button><button class="pc-btn" data-backfill-close>关闭</button></div>
+          <p role="status" aria-live="polite" data-backfill-status></p><div style="max-height:38vh;overflow:auto;overflow-wrap:anywhere" data-backfill-results></div>`);
+        const currentBox = box, find = selector => currentBox.querySelector(selector);
+        find('[data-backfill-mode]').value = previous.running ? previous.mode : mode;
+        const options = () => ({ from: find('[data-backfill-from]').valueAsNumber, to: find('[data-backfill-to]').valueAsNumber, mode: find('[data-backfill-mode]').value });
+        function preview() {
+            const { from, to, mode } = options();
+            find('[data-backfill-api]').textContent = `文字 AI · ${apiLabel(mode)}。缺少画面方案时调用，出图沿用当前生图设置，会消耗相应额度。`;
+            try { const counts = controller.preview(from, to); find('[data-backfill-preview]').textContent = `可补 ${counts.candidates} 楼 · 已有图 ${counts.images} 楼 · 生成中 ${counts.busy} 楼`; }
+            catch (error) { find('[data-backfill-preview]').textContent = error.message; }
+        }
+        function render(state) {
+            for (const selector of ['[data-backfill-from]', '[data-backfill-to]', '[data-backfill-mode]', '[data-backfill-start]']) find(selector).disabled = state.running;
+            find('[data-backfill-stop]').disabled = !state.running || state.stopping;
+            const count = status => state.rows.filter(row => row.status === status).length;
+            const working = state.rows.find(row => row.status === 'working');
+            const status = state.stopping ? '正在停止，等待当前楼层收尾' : state.running ? `正在补第 ${working?.id ?? '…'} 楼` : state.reason;
+            find('[data-backfill-status]').textContent = `${status} · 成功 ${count('done')} · 跳过 ${count('skipped')} · 失败 ${count('failed')}`;
+            const labels = { queued: '排队', working: '生成中', done: '成功', skipped: '跳过', failed: '失败' };
+            find('[data-backfill-results]').innerHTML = state.rows.map(row => `<div>#${row.id} · ${labels[row.status]} ${esc(row.reason)}</div>`).join('');
+            if (!state.running) preview();
+        }
+        currentBox.addEventListener('change', preview);
+        find('[data-backfill-start]').onclick = async () => {
+            try { await controller.start(options()); }
+            catch (error) { find('[data-backfill-status]').textContent = error.message; }
+        };
+        find('[data-backfill-stop]').onclick = () => controller.cancel();
+        find('[data-backfill-close]').onclick = () => { unsubscribe(); currentBox.closeModal(); };
+        unsubscribe = controller.subscribe(state => { if (currentBox.isConnected) render(state); else unsubscribe(); });
+        preview(); render(previous);
+        return currentBox;
+    }
+    return { open, stop() { unsubscribe(); box?.closeModal(); box = null; } };
+}
+
 // 漫画模式：认出聊天回复里的 <image>@page …</image> 漫画页（「酒馆看漫画」预设的分段协议），
 // 按页调用 NovelAI V5 Full 出整页漫画，存在这一楼的消息里；楼层下面按页显示，魔棒菜单「漫画」像漫画书一样翻。
 // 协议与思路来自「漫画台」预设（作者允许署名后使用，见 README「来源与署名」）；代码为智库自写。
@@ -551,7 +687,7 @@ function createComicController(deps) {
         const snap = pageSnapshot(id, blocks[0]);
         for (const b of blocks) {
             if (!snap?.current()) break;
-            if (!rec(msg, b.key)?.versions?.length && !running.has(`${id}:${b.key}`)) await generateOne(id, b);
+            if (!rec(msg, b.key)?.versions?.some(version => version.url) && !running.has(`${id}:${b.key}`)) await generateOne(id, b);
         }
     }
 
@@ -1116,6 +1252,15 @@ function createComicController(deps) {
 
     return {
         process, render, renderAll, openBook, generateOne, adapt, unadapt, openSettings,
+        status(id) {
+            const msg = getContext().chat?.[id], blocks = comicBlocks(srcOf(msg));
+            return {
+                busy: isAdapting(id) || [...running.keys()].some(key => key.startsWith(id + ':')),
+                images: blocks.filter(block => rec(msg, block.key)?.versions?.some(version => version.url)).length,
+                pages: blocks.length,
+                error: failure(id) || blocks.map(block => errors.get(`${id}:${block.key}`)).filter(Boolean).join('；'),
+            };
+        },
         stop() {
             stopped = true;
             cancelPress({type:'stop'});
@@ -1286,10 +1431,11 @@ function applyIllustrationRating(positive, rating) {
 }
 
 
-function createIllustrationPlanner({ getContext, getData, settings, roster, askLLM, pickJson, warn, onRequest = () => {}, afterSave = () => {} }) {
+function createIllustrationPlanner({ getContext, getData, settings, roster, askLLM, pickJson, warn: notifyWarning, onRequest = () => {}, afterSave = () => {} }) {
     let stopped = false;
     const seen = new WeakMap();
     const selectedBusy = new WeakSet();
+    const busy = new WeakSet(), failures = new WeakMap();
     const chatKey=c=>String(c.getCurrentChatId?.() ?? c.chatId ?? '')+'|'+String(c.characterId??'')+'|'+String(c.groupId??'');
     function request(mode, story = '', selectedPassage) {
         const cfg = settings();
@@ -1304,14 +1450,22 @@ function createIllustrationPlanner({ getContext, getData, settings, roster, askL
         c.setExtensionPrompt('zhiku_illust', req?.injection || '', 1, 0, false, 0);
         if (req) onRequest(req);
     }
-    async function after(id, selection = null) {
+    async function after(id, selection = null, options = {}) {
+        const msg = getContext().chat?.[id];
+        if (!msg || busy.has(msg)) return;
+        busy.add(msg); failures.delete(msg);
+        try { return await plan(id, selection, options); }
+        finally { busy.delete(msg); }
+    }
+    async function plan(id, selection, { backfill = false } = {}) {
         const c = getContext(), cfg = settings(), msg = c.chat?.[id];
-        const manual=!!selection;
-        if (stopped || !cfg.start || !cfg.end || !msg || msg.is_system || (!manual && (getData().options.illustMode !== 'after' || msg.is_user || id !== c.chat.length - 1))) return;
+        const manual=!!selection || backfill;
+        const warn = message => { failures.set(msg, message); notifyWarning(message); };
+        if (stopped || !cfg.start || !cfg.end || !msg || (msg.is_system && !(backfill && isComicReply(msg))) || (backfill && !isComicReply(msg)) || (!manual && (getData().options.illustMode !== 'after' || msg.is_user || id !== c.chat.length - 1))) return;
         const source = String(msg.mes || '');
-        if (manual && (msg!==selection.msg || source!==selection.source || msg.swipe_id!==selection.swipe || chatKey(c)!==selection.chatKey)) throw new Error('聊天或原文已变化，请重新选择文字');
-        if (!source.trim() || (!manual && parseImageMarkers(source,cfg.start,cfg.end).length)) return;
-        const story = manual?selectedImageStory(source,cfg):imageStoryText(source);
+        if (selection && (msg!==selection.msg || source!==selection.source || msg.swipe_id!==selection.swipe || chatKey(c)!==selection.chatKey)) throw new Error('聊天或原文已变化，请重新选择文字');
+        if (!source.trim() || ((!manual || backfill) && parseImageMarkers(source,cfg.start,cfg.end).length)) return;
+        const story = selection?selectedImageStory(source,cfg):imageStoryText(source);
         if (!story) return;
         const req = request('after', story,selection?.text), signature = String(msg.swipe_id) + source + req.system + req.user;
         if (!manual && seen.get(msg) === signature) return;
@@ -1340,7 +1494,7 @@ function createIllustrationPlanner({ getContext, getData, settings, roster, askL
                     if(anchor.length<4 || !story.includes(anchor))throw new Error('画面定位句不在正文中');
                     tags=cleanImageTags(item?.tags);resolveImageCharacters(tags,roster());
                 }
-                if(manual&&!selectionTextMap(selection.text).normalized.includes(selectionTextMap(anchor).normalized))throw new Error('画面定位句不在点选段落中');
+                if(selection&&!selectionTextMap(selection.text).normalized.includes(selectionTextMap(anchor).normalized))throw new Error('画面定位句不在点选段落中');
                 if(!tags)throw new Error('图片标签为空');
                 if(tags.includes(cfg.start)||tags.includes(cfg.end))throw new Error('标签包含当前生图分隔符，请调整标签或分隔符');
                 const raw=cfg.start+tags+cfg.end;
@@ -1351,7 +1505,7 @@ function createIllustrationPlanner({ getContext, getData, settings, roster, askL
         if (!selected.length) { warn('没有可用的画面方案；请检查提示词输出格式或重新生成正文');forget();return; }
         // Locate against the original story once. Preserve order for images sharing an anchor.
         const insertions = new Map();
-        for(const shot of selected){const at=manual?safeImageInsertionPoint(source,selection.insertAt):imageInsertionPoint(source,shot.anchor);if(!Number.isInteger(at)||at<0||at>source.length)throw new Error('选段插入位置无效');insertions.set(at,[...(insertions.get(at)||[]),shot]);}
+        for(const shot of selected){const at=selection?safeImageInsertionPoint(source,selection.insertAt):imageInsertionPoint(source,shot.anchor);if(!Number.isInteger(at)||at<0||at>source.length)throw new Error('选段插入位置无效');insertions.set(at,[...(insertions.get(at)||[]),shot]);}
         let next='',cursor=0;const positions=new Set(),shifts=[];
         for(const [at,shots] of [...insertions].sort((a,b)=>a[0]-b[0])){next+=source.slice(cursor,at);const before=next.length;for(const shot of shots){next+='\n';positions.add(next.length);next+=shot.raw+'\n';}shifts.push({at,length:next.length-before});cursor=at;}
         next+=source.slice(cursor);
@@ -1381,7 +1535,7 @@ function createIllustrationPlanner({ getContext, getData, settings, roster, askL
         selectedBusy.add(selection.msg);
         try{return await after(selection.id,selection);}finally{selectedBusy.delete(selection.msg);}
     }
-    return {sync,after,selected,stop(){stopped=true;getContext().setExtensionPrompt?.('zhiku_illust','',1,0,false,0);}};
+    return {sync,after,selected,backfill:id=>after(id,null,{backfill:true}),status(id){const msg=getContext().chat?.[id];return {busy:!!msg&&busy.has(msg),error:msg?failures.get(msg)||'':''};},stop(){stopped=true;getContext().setExtensionPrompt?.('zhiku_illust','',1,0,false,0);}};
 }
 
 
@@ -1389,7 +1543,7 @@ function renderIllustrationEditor(options, draft, hasRequest, esc) {
     return `<section class="pc-illust-editor pc-mt">
       <style>.pc-illust-editor textarea,.pc-illust-request{scrollbar-width:none;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}.pc-illust-editor textarea::-webkit-scrollbar,.pc-illust-request::-webkit-scrollbar{display:none}.pc-illust-editor textarea{min-height:240px;width:100%;box-sizing:border-box}.pc-illust-request{max-height:65vh;font-size:14px;line-height:1.6}</style>
       <label class="pc-field"><span>正文转生图提示词 · SFW / NSFW 共用</span><textarea class="pc-textarea" data-bind="illustPromptDraft" rows="10">${esc(draft ?? illustrationPrompt(options))}</textarea></label>
-      <div class="pc-actions wrap"><button class="pc-btn dark" data-act="illprompt-save">保存提示词</button><button class="pc-btn" data-act="illprompt-default">恢复默认</button><button class="pc-btn" data-act="illprompt-preview">预览当前请求</button><button class="pc-btn" data-act="illprompt-last" ${hasRequest?'':'disabled'}>最近组装的请求</button></div>
+      <div class="pc-actions wrap"><button class="pc-btn" data-act="image-backfill">补未生图楼层</button><button class="pc-btn dark" data-act="illprompt-save">保存提示词</button><button class="pc-btn" data-act="illprompt-default">恢复默认</button><button class="pc-btn" data-act="illprompt-preview">预览当前请求</button><button class="pc-btn" data-act="illprompt-last" ${hasRequest?'':'disabled'}>最近组装的请求</button></div>
       <div class="pc-hint">保存后用于下一次自动插图；恢复默认先填回编辑框，保存才生效。两种分级都填写姿势、视线、站位、互动与构图。张数沿用上面的选择。修改输出格式时请保留画面字段。预览不发请求、不生图。</div>
     </section>`;
 }
@@ -1726,7 +1880,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.54-native.1（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.54-native.2（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1775,7 +1929,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.54-native.1';
+globalThis.__PC_VERSION = '0.8.54-native.2';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -5941,7 +6095,7 @@ function createMarkerController({context,getData,generate,upload,notify,document
     const chatKey=c=>String(c.getCurrentChatId?.() ?? c.chatId ?? '')+'|'+String(c.characterId ?? '')+'|'+String(c.groupId ?? '');
     async function process(id,{manual=false,tokenIndex=null,tokenIndices=null,promptOverride=null}={}) {
         const c=context(),msg=c.chat?.[id],cfg=settings();
-        if(stopped||!msg||msg.is_system||(!manual&&(!cfg.auto||msg.is_user)))return 0;
+        if(stopped||!msg||(msg.is_system&&!(manual&&isComicReply(msg)))||(!manual&&(!cfg.auto||msg.is_user)))return 0;
         const source=String(msg.mes||''),swipe=msg.swipe_id,chat=chatKey(c),all=parseImageMarkers(source,cfg.start,cfg.end);
         if(manual&&tokenIndex===null&&!Array.isArray(tokenIndices)&&all.length>1){notify('请点击具体提示词旁的生成按钮，一次只生成所选图片','info');decorate(id);return 0;}
         const selected=Array.isArray(tokenIndices)?all.filter((_,i)=>tokenIndices.includes(i)):tokenIndex===null?all:all.filter((_,i)=>i===tokenIndex);
@@ -5977,13 +6131,19 @@ function createMarkerController({context,getData,generate,upload,notify,document
                     records[key]={url:String(url),prompt,versions};
                     try{await c.saveChat();}catch(e){if(old)records[key]=old;else delete records[key];if(!hadRecords&&!Object.keys(records).length)delete msg.extra.zhikuImages;if(!hadExtra&&!Object.keys(msg.extra).length)delete msg.extra;throw e;}
                     failed.get(msg)?.delete(key);return 1;
-                }catch(e){let errors=failed.get(msg);if(!errors){errors=new Set();failed.set(msg,errors);}errors.add(key);notify(e.message||String(e),'error');return 0;}
+                }catch(e){let errors=failed.get(msg);if(!errors){errors=new Map();failed.set(msg,errors);}errors.set(key,e.message||String(e));notify(e.message||String(e),'error');return 0;}
             }).finally(()=>{inflight.delete(flight);map.delete(key);if(!map.size)pending.delete(msg);if(!stopped&&chatKey(context())===chat)decorate(id);});
             entry.job=job;queue=job.catch(()=>{});return job;
         });
         decorate(id);return (await Promise.all(jobs)).reduce((a,b)=>a+b,0);
     }
-    return {settings,syncRegex,process,decorate,decorateAll,refresh,applyImageDefault,stop(){stopped=true;for(const timer of holds)clearTimeout(timer);holds.clear();for(const el of overlays)el.remove();overlays.clear();if(doc)doc.querySelectorAll('.pc-image-actions').forEach(el=>el.remove());},idle(){return queue;}};
+    function status(id) {
+        const msg=context().chat?.[id],cfg=settings(),tokens=parseImageMarkers(msg?.mes,cfg.start,cfg.end);
+        const missing=tokens.map((token,i)=>findRecord(msg,token)?.url?-1:i).filter(i=>i>=0);
+        const error=tokens.map(token=>failed.get(msg)?.get(recordKey(msg,token))).filter(Boolean).join('；');
+        return {busy:!!msg&&pending.has(msg),images:tokens.length-missing.length,missing,tokens:tokens.length,error};
+    }
+    return {settings,syncRegex,process,status,decorate,decorateAll,refresh,applyImageDefault,stop(){stopped=true;for(const timer of holds)clearTimeout(timer);holds.clear();for(const el of overlays)el.remove();overlays.clear();if(doc)doc.querySelectorAll('.pc-image-actions').forEach(el=>el.remove());},idle(){return queue;}};
 }
 
 /** 本地图片库：存在用户自己的浏览器（IndexedDB）里，不占酒馆服务器。地址写成 idb:xxx */
@@ -9328,7 +9488,7 @@ function viewSettings(d) {
       ${sw('comicOn', '漫画模式', '认出回复里的 <image>@page…</image> 漫画页，按页画出来存在这一楼')}
       <div class="pc-hint">画风、颜色、对白、尺寸、每楼几页、改编要求和负面，都在顶上「漫画」那一页调。楼层按钮里的 📖「画成漫画」不开漫画模式也能用。</div>
       <div class="pc-hint">配合「酒馆看漫画」预设（漫画台）用时，<b>先把预设里自带的「漫画台」脚本关掉</b>，不然两边各画一遍、扣两次点。</div>
-      <div class="pc-actions wrap"><button class="pc-btn dark" data-act="nav" data-view="comic">打开漫画设置</button><button class="pc-btn" data-act="comicbook">翻看这个聊天的漫画</button></div>`);
+      <div class="pc-actions wrap"><button class="pc-btn dark" data-act="nav" data-view="comic">打开漫画设置</button><button class="pc-btn" data-act="comicbook">翻看这个聊天的漫画</button><button class="pc-btn" data-act="image-backfill">补未生图楼层</button></div>`);
     const about = setFold('about', '关于', '智库 v' + (globalThis.__PC_VERSION || ''), `
       <style>.pc-about-card{text-align:center;padding:22px 10px 10px;border-radius:16px;background:radial-gradient(circle at 50% 0,rgba(201,138,62,.22),transparent 70%)}.pc-about-name{font-family:var(--pc-font-name);font-size:34px;font-weight:800;letter-spacing:.3em;padding-left:.3em;color:var(--pc-ink)}.pc-about-card .pc-subtitle{font-size:13px;margin-top:4px}.pc-about-ver{display:block;margin-top:12px;font:11px var(--pc-font-label);letter-spacing:.25em;color:var(--pc-ink-soft);text-transform:uppercase}.pc-about-card .pc-actions{justify-content:center;margin-top:14px}.pc-about-note{text-align:center;font-size:12px;color:var(--pc-ink-soft);margin-top:12px;line-height:1.7}</style>
       <div class="pc-about-card"><div class="pc-about-name">智库</div><div class="pc-subtitle">二改自从前佬的智绘姬</div>
@@ -9345,7 +9505,7 @@ function viewComic(d) {
     return `<h2 class="pc-pagetitle">漫画</h2>
       <section class="pc-card pc-pad"><div class="pc-dim small">AI 读楼层的正文改编成漫画，再用 NAI 一页页画出来。楼层按钮里的 📖「画成漫画」、漫画书「目录」里都能挑一楼画。</div>
         <div class="pc-dim small" style="margin-top:6px;opacity:.8">漫画协议和玩法来自「漫画台」预设，作者 小鸟游星野（__takanashi_hoshino__）。</div>
-        <div class="pc-actions wrap"><button class="pc-btn dark" data-act="comicbook">翻看这个聊天的漫画</button></div></section>
+        <div class="pc-actions wrap"><button class="pc-btn dark" data-act="comicbook">翻看这个聊天的漫画</button><button class="pc-btn" data-act="image-backfill">补未生图楼层</button></div></section>
       <section class="pc-card pc-pad pc-mt"><h3 class="pc-h3">漫画设置</h3><div id="pc-comic-view"></div></section>
       <div style="height:24px"></div>`;
 }
@@ -9440,6 +9600,7 @@ async function onClick(ev, outside = false) {
             case 'newsampleseed': getData().options.sampleSeed = Math.floor(Math.random() * 4294967294) + 1; commit(); render(); break;
             case 'comicsize': getData().options.comicSize = el.dataset.size; commit(); render(); break;
             case 'comictext': getData().options.comicText = el.dataset.v; commit(); render(); break;
+            case 'image-backfill': globalThis.__zhikuBackfill?.open(ui.view === 'comic' ? 'comic' : 'ill'); break;
             case 'comicbook': globalThis.__zhikuComic?.openBook(); break;
             case 'comicsettings': globalThis.__zhikuComic?.openSettings(); break;
             case 'imgstore': { getData().options.imageStore = el.dataset.mode; commit(); render(); break; }
@@ -11990,7 +12151,7 @@ async function start() {
     syncModel();
     cleanups.push(onChange(syncModel));
 
-    const onChat = () => { selectedImages.reset(); return setTimeout(() => { globalThis.__zhikuComic?.renderAll({ chatChanged: true }); UI.renderChip(); UI.renderStub(); E.applyBindingOnChatChange(); addMesButtons(); }, 300); };
+    const onChat = () => { backfill.chatChanged(); selectedImages.reset(); return setTimeout(() => { globalThis.__zhikuComic?.renderAll({ chatChanged: true }); UI.renderChip(); UI.renderStub(); E.applyBindingOnChatChange(); addMesButtons(); }, 300); };
     DOC.addEventListener('click', onChatClick, true);
     cleanups.push(() => { DOC.removeEventListener('click', onChatClick, true); DOC.querySelectorAll('.pc-mes-gen, .pc-mes-outfit, .pc-mes-comic').forEach(n => n.remove()); });
     const onRendered = id => { setTimeout(addMesButtons, 50); };
@@ -12020,6 +12181,22 @@ async function start() {
         notify: m => toastr.info(m, '智库 · 漫画', { timeOut: 1500 }), notifyError: m => toastr.error(m, '智库 · 漫画', { timeOut: 9000 }), naiMode: () => N.settings().naiMode, modal: UI.modal, esc: UI.esc,
     });
     globalThis.__zhikuComic = comic;
+    const backfill = createImageBackfill({
+        getContext: () => SillyTavern.getContext(), planner: illustrationPlanner, marker: __mod_marker, comic,
+        validate: mode => {
+            if (mode === 'comic' && N.settings().naiMode === 'tavern') throw new Error('漫画需要先配置自己的 NovelAI 或兼容第三方站点接口');
+            if (mode === 'ill') {
+                const cfg = __mod_marker.settings();
+                if (!cfg.start || !cfg.end) throw new Error('请先在设置里填写生图标记的起止分隔符');
+            }
+        },
+    });
+    const backfillUI = createImageBackfillUI({
+        controller: backfill, getContext: () => SillyTavern.getContext(), modal: UI.modal, esc: UI.esc,
+        apiLabel: mode => { const api = __mod_translate.apiFor(mode === 'comic' ? 'comic' : 'ill'); return [api.from, api.model].filter(Boolean).join(' · ') || '跟随当前 AI 配置'; },
+    });
+    globalThis.__zhikuBackfill = backfillUI;
+    cleanups.push(() => { backfill.stop(); backfillUI.stop(); if (globalThis.__zhikuBackfill === backfillUI) globalThis.__zhikuBackfill = null; });
     cleanups.push(() => { comic.stop(); if (globalThis.__zhikuComic === comic) globalThis.__zhikuComic = null; });
     cleanups.push(onChange(() => comic.renderAll()));
     {

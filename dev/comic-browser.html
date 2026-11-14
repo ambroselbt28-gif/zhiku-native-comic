@@ -14,9 +14,10 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 </style>
 <div id="chat"><div class="mes" mesid="79"><button class="pc-mes-comic">画成漫画</button><div class="mes_text">合成剧情，测试角色在雨天走进咖啡馆。</div></div></div>
 <section id="settings"></section>
+<button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { createComicController, onChatClick } from './runtime-comic.js';
+import { createComicController, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
     if (!value) throw new Error(name);
@@ -42,16 +43,24 @@ const context = { chatId: 'browser-fixture', chat: [], saveChat: async () => {} 
 context.chat[79] = message;
 const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0uoAAAAASUVORK5CYII=';
 const requests = [];
+let drawBarrier = null;
 const controller = createComicController({
     document, getContext: () => context, getData: () => data, commit() {},
     esc: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'),
     askLLM: async () => page,
-    generatePage: async request => { requests.push(request); return { image }; },
+    generatePage: async request => { requests.push(request); if (drawBarrier) await drawBarrier; return { image }; },
     storeImage: async () => ({ url: image }), resolveUrl: value => value,
     notify() {}, notifyError: value => { throw new Error(value); },
 });
 globalThis.__zhikuComic = controller;
 document.addEventListener('click', onChatClick, true);
+document.addEventListener('click', onBackfillClick);
+const escape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+const batch = createImageBackfill({ getContext: () => context, comic: controller, marker: { status: () => ({ images: 0 }) }, planner: { status: () => ({}) } });
+const batchUI = createImageBackfillUI({ controller: batch, getContext: () => context, esc: escape, apiLabel: () => '合成副 API', modal: html => {
+    const box = document.createElement('section'); box.style.cssText = 'max-width:600px;margin:auto'; box.innerHTML = html; box.closeModal = () => box.remove(); document.body.append(box); return box;
+} });
+globalThis.__zhikuBackfill = batchUI;
 window.stcrSelfTest = async () => {
     document.querySelector('.pc-mes-comic').click();
     await nextTurn();
@@ -74,6 +83,28 @@ window.stcrSelfTest = async () => {
     await nextTurn();
     check('插件叠字选择可独立使用', data.options.comicText === 'overlay' && !!document.querySelector('.pc-comic-caps'));
     check('手动生成保留消息隐藏状态和正文', message.is_system && message.mes === 'A person enters a cafe and greets the owner.');
+    context.chat[80] = { name: '合成角色', is_system: true, mes: 'A person opens a book by the window.' };
+    context.chat[81] = { name: '合成角色', mes: 'A person puts down a cup in the cafe.' };
+    document.querySelector('[data-act="image-backfill"]').click();
+    const from = document.querySelector('[data-backfill-from]'), to = document.querySelector('[data-backfill-to]');
+    from.value = '79'; to.value = '81'; from.dispatchEvent(new Event('change', { bubbles: true }));
+    check('正式补图入口可选漫画和楼层范围', document.querySelector('[data-backfill-mode]').value === 'comic' && to.value === '81');
+    check('预览跳过已有漫画并统计隐藏楼', document.querySelector('[data-backfill-preview]').textContent.includes('可补 2 楼'));
+    let release;
+    drawBarrier = new Promise(resolve => { release = resolve; });
+    document.querySelector('[data-backfill-start]').click(); await nextTurn();
+    check('进度展示当前楼且禁止重复开始', document.querySelector('[data-backfill-start]').disabled && document.querySelector('[data-backfill-status]').textContent.includes('80'));
+    document.querySelector('[data-backfill-stop]').click();
+    check('停止按钮等待当前楼层收尾', document.querySelector('[data-backfill-status]').textContent.includes('等待当前楼层'));
+    release(); drawBarrier = null; await nextTurn();
+    check('停止后保留成功图片并跳过后续楼', controller.status(80).images === 1 && controller.status(81).images === 0 && !batch.snapshot().running);
+    document.querySelector('[data-backfill-close]').click();
+    document.querySelector('[data-act="image-backfill"]').click();
+    check('重新打开仍显示上一轮进度', document.querySelector('[data-backfill-results]').textContent.includes('#80 · 成功'));
+    document.querySelector('[data-backfill-from]').value = '81'; document.querySelector('[data-backfill-to]').value = '81';
+    document.querySelector('[data-backfill-start]').click(); await nextTurn();
+    check('指定单楼继续补图', controller.status(81).images === 1 && batch.snapshot().rows.length === 1);
+    check('手机展示副 API 来源且没有横向溢出', document.querySelector('[data-backfill-api]').textContent.includes('合成副 API') && document.documentElement.scrollWidth <= window.innerWidth);
     return checks;
 };
 try {

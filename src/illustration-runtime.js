@@ -2,11 +2,13 @@ import { illustrationRequest, compileIllustrationPlan, illustrationMarkerText } 
 import { imageStoryText, imageInsertionPoint, safeImageInsertionPoint, cleanImageTags, resolveImageCharacters } from './image-characters.js';
 import { parseImageMarkers, shiftImageRecords } from './marker-generation.js';
 import { locateSelectedText, selectedImageStory, selectionTextMap } from './selected-image.js';
+import { isComicReply } from './comic.js';
 
-export function createIllustrationPlanner({ getContext, getData, settings, roster, askLLM, pickJson, warn, onRequest = () => {}, afterSave = () => {} }) {
+export function createIllustrationPlanner({ getContext, getData, settings, roster, askLLM, pickJson, warn: notifyWarning, onRequest = () => {}, afterSave = () => {} }) {
     let stopped = false;
     const seen = new WeakMap();
     const selectedBusy = new WeakSet();
+    const busy = new WeakSet(), failures = new WeakMap();
     const chatKey=c=>String(c.getCurrentChatId?.() ?? c.chatId ?? '')+'|'+String(c.characterId??'')+'|'+String(c.groupId??'');
     function request(mode, story = '', selectedPassage) {
         const cfg = settings();
@@ -21,14 +23,22 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
         c.setExtensionPrompt('zhiku_illust', req?.injection || '', 1, 0, false, 0);
         if (req) onRequest(req);
     }
-    async function after(id, selection = null) {
+    async function after(id, selection = null, options = {}) {
+        const msg = getContext().chat?.[id];
+        if (!msg || busy.has(msg)) return;
+        busy.add(msg); failures.delete(msg);
+        try { return await plan(id, selection, options); }
+        finally { busy.delete(msg); }
+    }
+    async function plan(id, selection, { backfill = false } = {}) {
         const c = getContext(), cfg = settings(), msg = c.chat?.[id];
-        const manual=!!selection;
-        if (stopped || !cfg.start || !cfg.end || !msg || msg.is_system || (!manual && (getData().options.illustMode !== 'after' || msg.is_user || id !== c.chat.length - 1))) return;
+        const manual=!!selection || backfill;
+        const warn = message => { failures.set(msg, message); notifyWarning(message); };
+        if (stopped || !cfg.start || !cfg.end || !msg || (msg.is_system && !(backfill && isComicReply(msg))) || (backfill && !isComicReply(msg)) || (!manual && (getData().options.illustMode !== 'after' || msg.is_user || id !== c.chat.length - 1))) return;
         const source = String(msg.mes || '');
-        if (manual && (msg!==selection.msg || source!==selection.source || msg.swipe_id!==selection.swipe || chatKey(c)!==selection.chatKey)) throw new Error('聊天或原文已变化，请重新选择文字');
-        if (!source.trim() || (!manual && parseImageMarkers(source,cfg.start,cfg.end).length)) return;
-        const story = manual?selectedImageStory(source,cfg):imageStoryText(source);
+        if (selection && (msg!==selection.msg || source!==selection.source || msg.swipe_id!==selection.swipe || chatKey(c)!==selection.chatKey)) throw new Error('聊天或原文已变化，请重新选择文字');
+        if (!source.trim() || ((!manual || backfill) && parseImageMarkers(source,cfg.start,cfg.end).length)) return;
+        const story = selection?selectedImageStory(source,cfg):imageStoryText(source);
         if (!story) return;
         const req = request('after', story,selection?.text), signature = String(msg.swipe_id) + source + req.system + req.user;
         if (!manual && seen.get(msg) === signature) return;
@@ -57,7 +67,7 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
                     if(anchor.length<4 || !story.includes(anchor))throw new Error('画面定位句不在正文中');
                     tags=cleanImageTags(item?.tags);resolveImageCharacters(tags,roster());
                 }
-                if(manual&&!selectionTextMap(selection.text).normalized.includes(selectionTextMap(anchor).normalized))throw new Error('画面定位句不在点选段落中');
+                if(selection&&!selectionTextMap(selection.text).normalized.includes(selectionTextMap(anchor).normalized))throw new Error('画面定位句不在点选段落中');
                 if(!tags)throw new Error('图片标签为空');
                 if(tags.includes(cfg.start)||tags.includes(cfg.end))throw new Error('标签包含当前生图分隔符，请调整标签或分隔符');
                 const raw=cfg.start+tags+cfg.end;
@@ -68,7 +78,7 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
         if (!selected.length) { warn('没有可用的画面方案；请检查提示词输出格式或重新生成正文');forget();return; }
         // Locate against the original story once. Preserve order for images sharing an anchor.
         const insertions = new Map();
-        for(const shot of selected){const at=manual?safeImageInsertionPoint(source,selection.insertAt):imageInsertionPoint(source,shot.anchor);if(!Number.isInteger(at)||at<0||at>source.length)throw new Error('选段插入位置无效');insertions.set(at,[...(insertions.get(at)||[]),shot]);}
+        for(const shot of selected){const at=selection?safeImageInsertionPoint(source,selection.insertAt):imageInsertionPoint(source,shot.anchor);if(!Number.isInteger(at)||at<0||at>source.length)throw new Error('选段插入位置无效');insertions.set(at,[...(insertions.get(at)||[]),shot]);}
         let next='',cursor=0;const positions=new Set(),shifts=[];
         for(const [at,shots] of [...insertions].sort((a,b)=>a[0]-b[0])){next+=source.slice(cursor,at);const before=next.length;for(const shot of shots){next+='\n';positions.add(next.length);next+=shot.raw+'\n';}shifts.push({at,length:next.length-before});cursor=at;}
         next+=source.slice(cursor);
@@ -98,5 +108,5 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
         selectedBusy.add(selection.msg);
         try{return await after(selection.id,selection);}finally{selectedBusy.delete(selection.msg);}
     }
-    return {sync,after,selected,stop(){stopped=true;getContext().setExtensionPrompt?.('zhiku_illust','',1,0,false,0);}};
+    return {sync,after,selected,backfill:id=>after(id,null,{backfill:true}),status(id){const msg=getContext().chat?.[id];return {busy:!!msg&&busy.has(msg),error:msg?failures.get(msg)||'':''};},stop(){stopped=true;getContext().setExtensionPrompt?.('zhiku_illust','',1,0,false,0);}};
 }

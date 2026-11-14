@@ -22,13 +22,14 @@ import {applyStudioUx} from './studio-ux.mjs';
 import {applyImageCharacters} from './image-characters.mjs';
 import {applyIllustrationPlans} from './illustration-plans.mjs';
 import {applyComic} from './comic.mjs';
+import {applyImageBackfill} from './image-backfill.mjs';
 import {fileURLToPath} from 'node:url';
 process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 const dir='.';
 let s=applyMarkers(JSON.parse(fs.readFileSync('zhiku.script.json','utf8')).content);
 function patch(a,b){assert.equal(s.split(a).length,2,a.slice(0,80));s=s.replace(a,()=>b);}
-patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.54-native.1';");
-patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.54-native.1');
+patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.54-native.2';");
+patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.54-native.2');
 patch('    const run = () => {\n        saving = saving.then(writeNow)', '    const run = () => {\n        saveTimer = null;\n        saving = saving.then(writeNow)');
 patch('return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl };', 'return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl, flush: () => saveTimer !== null ? commit({ immediate: true, silent: true }) : saving };');
 // Preserve nested API error messages and object details in both response paths.
@@ -4959,6 +4960,7 @@ patch('body=>{try{naiSent=naiRequestSnapshot(body);}catch{}},responseInfo);', `b
             if(opts.comic)globalThis.__zkLog?.('漫画请求',body.model+' · 原生整页 · '+(body.parameters?.v4_prompt?.caption?.char_captions?.length||0)+' 条人物提示',JSON.stringify(naiSent,null,1));
         }catch{}},responseInfo);`);
 patch("if(s.naiMode==='site'){p.use_coords=false;p.v4_prompt.use_coords=false;}", "if(s.naiMode==='site'&&!comic){p.use_coords=false;p.v4_prompt.use_coords=false;}");
+s=applyImageBackfill(s);
 const prefix=`// 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
 export function createRuntime() {
 let stopped = false;
@@ -4972,9 +4974,9 @@ function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
 `;
 fs.writeFileSync(dir+'/runtime.js',(prefix+s+'\n}\n').replace(/\r\n/g, '\n'));
 fs.copyFileSync('src/index.js',dir+'/index.js');
-fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.54-native.1',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
-fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.54-native.1',private:true,type:'module'},null,2)+'\n');
+fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.54-native.2',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
+fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.54-native.2',private:true,type:'module'},null,2)+'\n');
 fs.writeFileSync(dir+'/capability-contract.json',JSON.stringify({schemaVersion:1,minimum:{sillytavern:'1.14.0',tavernHelper:null},requirements:[{id:'host-context',owner:'sillytavern',symbol:'SillyTavern.getContext',required:true,fallback:null}]},null,2));
 assert(!s.includes('getButtonEvent('));
 for(const key of ['piaoce_data.json','piaoce_nai','piaoce_uid','data-share-form'])assert(s.includes(key));
-console.log('智库 NAI5 原生漫画二改 0.8.54-native.1 构建完成。');
+console.log('智库 NAI5 原生漫画二改 0.8.54-native.2 构建完成。');

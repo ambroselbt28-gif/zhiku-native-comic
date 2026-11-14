@@ -532,7 +532,7 @@ export function createComicController(deps) {
         const snap = pageSnapshot(id, blocks[0]);
         for (const b of blocks) {
             if (!snap?.current()) break;
-            if (!rec(msg, b.key)?.versions?.length && !running.has(`${id}:${b.key}`)) await generateOne(id, b);
+            if (!rec(msg, b.key)?.versions?.some(version => version.url) && !running.has(`${id}:${b.key}`)) await generateOne(id, b);
         }
     }
 
@@ -1093,6 +1093,15 @@ export function createComicController(deps) {
 
     return {
         process, render, renderAll, openBook, generateOne, adapt, unadapt, openSettings,
+        status(id) {
+            const msg = getContext().chat?.[id], blocks = comicBlocks(srcOf(msg));
+            return {
+                busy: isAdapting(id) || [...running.keys()].some(key => key.startsWith(id + ':')),
+                images: blocks.filter(block => rec(msg, block.key)?.versions?.some(version => version.url)).length,
+                pages: blocks.length,
+                error: failure(id) || blocks.map(block => errors.get(`${id}:${block.key}`)).filter(Boolean).join('；'),
+            };
+        },
         stop() {
             stopped = true;
             cancelPress({type:'stop'});
