@@ -81,6 +81,11 @@ window.stcrSelfTest = async () => {
     await nextTurn();
     check('可以切回第一版', Object.values(message.extra.zhikuComic)[0].cur === 0);
     controller.openSettings(document.querySelector('#settings'));
+    check('默认按画格定位且实际请求坐标分属上下格', document.querySelector('[data-cw="comicPanelPositions"]').checked && requests[0].chars[0].center.y < 0.5 && requests[0].chars[1].center.y > 0.5);
+    document.querySelector('[data-cw="comicPanelPositions"]').click();
+    check('漫画人物定位可关闭并保存', data.options.comicPanelPositions === false && !document.querySelector('[data-cw="comicPanelPositions"]').checked);
+    document.querySelector('[data-cw="comicPanelPositions"]').click();
+    check('漫画人物定位可重新开启', data.options.comicPanelPositions === true && document.querySelector('[data-cw="comicPanelPositions"]').checked);
     check('设置默认选中 NAI 原生对白', document.querySelector('[data-cs="comicText"][data-v="draw"]').classList.contains('on'));
     document.querySelector('[data-cs="comicText"][data-v="overlay"]').click();
     document.querySelector('[data-cgen]').click();
@@ -178,7 +183,14 @@ window.stcrSelfTest = async () => {
     check('分镜与留白进入实际 AI 请求', aiRequests.at(-1).system.includes('所选分镜风格为「经典四格」') && aiRequests.at(-1).system.includes('所选留白方案为「全封闭内框」') && aiRequests.at(-1).user.includes('每页 4 格'));
     check('经典四格经过编译出多张漫画页', fourRow.querySelectorAll('.pc-comic-page').length === 2 && requests.at(-1).positive.includes('4 panels') && requests.at(-1).positive.includes('white border'));
     fourRow.querySelector('img').click();fourRow.querySelector('[data-cwork]').click();
+    check('本页编辑器说明重画与 AI 修分镜的区别', document.querySelector('.pc-comic-work').textContent.includes('会调用漫画改编 AI 并重新生图'));
+    const groundingEditor=document.querySelector('[data-w-text]'),cleanDraft=groundingEditor.value;
+    groundingEditor.value=cleanDraft.replace('medium shot','close-up').replace('sitting, looking at window','kicking suitcase, then walking');groundingEditor.dispatchEvent(new Event('input',{bubbles:true}));
+    check('编辑器提示近景腿脚与先后动作冲突', document.querySelector('[data-w-check]').textContent.includes('腿脚动作') && document.querySelector('[data-w-check]').textContent.includes('先后动作'));
+    groundingEditor.value=cleanDraft;groundingEditor.dispatchEvent(new Event('input',{bubbles:true}));
+    check('修正草稿后分镜提示及时消失', document.querySelector('[data-w-check]').textContent==='');
     document.querySelector('[data-w="ai"]').click();await nextTurn();
+    check('AI 重写带原文与镜头动作校对规则', aiRequests.at(-1).system.includes('每格只定格一个动作阶段') && aiRequests.at(-1).user.includes('<original_story readonly="true">') && aiRequests.at(-1).user.includes('角色在咖啡馆等雨，之后离开咖啡馆。'));
     check('本页 AI 重写也带当前分镜与留白', aiRequests.at(-1).user.includes('只重写第 1 页') && aiRequests.at(-1).system.includes('所选分镜风格为「经典四格」') && aiRequests.at(-1).system.includes('所选留白方案为「全封闭内框」'));
     setLayout('comicPanelStyle','shounen');
     check('切回其他风格恢复原每页格数选择', document.querySelector('[data-cs="comicPanels"][data-v="1–2"]').classList.contains('on') && data.options.comicPanels === '1–2');

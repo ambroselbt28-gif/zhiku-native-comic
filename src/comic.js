@@ -132,9 +132,14 @@ export function parseComicPage(inner) {
     const nativeVisual = [
         pieces[0].visual,
         pieces[1].visual,
+        ...[...new Set(chars.map(c => c.id).filter(Boolean))].map(id => {
+            const appearances = [...new Set(chars.filter(c => c.id === id).map(c => c.panelIndex + 1))];
+            return `Character ${id} is one recurring person, depicted in panel${appearances.length > 1 ? 's' : ''} ${appearances.join(', ')} with consistent identity.`;
+        }),
         ...data.panels.map((p, index) => {
             const scene = [splitText(p.description).visual, splitText(p.non_character).visual].filter(Boolean).join(', ');
-            return `Panel ${index + 1} (${p.id}): ${scene || 'continue the scene'}`;
+            const cast = [...new Set(chars.filter(c => c.panelIndex === index).map(c => c.id).filter(Boolean))];
+            return `Panel ${index + 1} (${p.id}): ${scene || 'continue the scene'}${cast.length ? '\nMain characters in this panel: ' + cast.map(id => 'Character ' + id).join(', ') + '.' : ''}`;
         }),
     ].filter(Boolean).join('\n');
     const nativeTexts = [
@@ -145,7 +150,43 @@ export function parseComicPage(inner) {
         }),
     ];
     const nativeBase = nativeVisual + (nativeTexts.length ? '\nText: ' + nativeTexts.join('\n\n') : '');
-    return { ok: true, base, visual, nativeBase, nativeVisual, chars, manual: !!data.manual, spread, panels: data.panels.length, pageTexts, panelTexts, boxes: panelBoxes(data) };
+    return { ok: true, base, visual, nativeBase, nativeVisual, chars, manual: !!data.manual, spread, panels: data.panels.length, pageTexts, panelTexts, boxes: panelBoxes(data), anchors: comicPanelAnchors(data), panelScenes: data.panels.map(p => splitText(p.description).visual) };
+}
+
+/** 只有明确的规则布局才推导定位，斜格、嵌套和大小不等的画格继续交给模型。 */
+export function comicPanelAnchors(data) {
+    const panels = data.panels || [], count = panels.length;
+    const base = splitText(data.page?.base).visual;
+    const locations = panels.map(p => splitText(p.description).visual.split(/[,\n]/)[0].trim().toLowerCase().replace(/\bupper\b/g, 'top').replace(/\blower\b/g, 'bottom'));
+    if (count < 2 || /inset|overlap|diagonal|tilted|irregular|unequal|asymmetr|slanted|floating|见开|見開き|spread/i.test([base, ...locations].join(' '))) return null;
+    if (count === 4 && ['top quarter', 'top middle quarter', 'bottom middle quarter', 'bottom quarter'].every(position => locations.includes(position))) {
+        const order = ['top quarter', 'top middle quarter', 'bottom middle quarter', 'bottom quarter'];
+        return locations.map(position => ({ x: 0, y: order.indexOf(position) / 4, w: 1, h: 0.25 }));
+    }
+    if (new Set(locations).size !== count || !locations.every(position => /^(?:top|middle|bottom)(?: (?:left|right|half|third|panel))?$/.test(position))) return null;
+    const rowKeys = [...new Set(locations.map(position => position.split(' ')[0]))];
+    if (!rowKeys.includes('top') || !rowKeys.includes('bottom')) return null;
+    for (const row of rowKeys) {
+        const group = locations.filter(position => position.split(' ')[0] === row);
+        if (group.length > 2 || (group.length === 2 && !(group.includes(row + ' left') && group.includes(row + ' right')))) return null;
+    }
+    return panelBoxes(data);
+}
+
+/** 可确定的镜头/动作冲突提示；不擅自删人物、改剧情或扩大特写镜头。 */
+export function comicGroundingWarnings(parsed) {
+    if (!parsed?.ok) return [];
+    const warnings = [], ids = new Set(parsed.chars.map(c => c.id));
+    for (let index = 0; index < parsed.panels; index++) {
+        const scene = parsed.panelScenes?.[index] || '', chars = parsed.chars.filter(c => c.panelIndex === index);
+        const actions = chars.map(c => splitText(c.positive).visual).join('\n');
+        if (/close[ -]?up|object focus/i.test(scene) && /(?:phone|smartphone) screen|object focus/i.test(scene) && chars.length > 1) warnings.push(`第 ${index + 1} 格写了物件特写，却放入多个人物；建议 AI 重写为物件/手部特写或人物中景。`);
+        if (/close[ -]?up/i.test(scene) && /\b(?:kicking|one foot|walking|running|kneeling)\b/i.test(actions)) warnings.push(`第 ${index + 1} 格的近景同时要求腿脚动作，请明确镜头拍脸还是拍脚，或改为全身镜头。`);
+        if (/\b(?:then|followed by|after that)\b/i.test(actions)) warnings.push(`第 ${index + 1} 格混入先后动作，建议拆成不同画格，每格一个瞬间。`);
+        const refs = [...(scene + '\n' + actions).matchAll(/\bC\d+\b/g)].map(m => m[0]).filter(id => !ids.has(id));
+        if (refs.length) warnings.push(`第 ${index + 1} 格引用了未定义人物 ${[...new Set(refs)].join('、')}，请补齐人物或用明确的外貌指代。`);
+    }
+    return warnings;
 }
 
 /** 按每格描述里的 top / bottom / left / right 估算每格在页面上的位置（0–1），对白叠在对应那一格 */
@@ -185,7 +226,7 @@ const capLine = t => String(t || '').replace(/(^|\n)[ \t]*Text[ \t]*[:：][ \t]*
 /** 出图请求：画风（正文画师串）在最前面，漫画页描述在后；负面 = 画风负面 + 漫画负面 */
 export const COMIC_NO_TEXT_NEG = 'text, speech bubble, letters, chinese text, english text';
 /** textMode：draw = 对白交给 NAI 画进图里；overlay = 不让 NAI 画字，插件叠在图上；none = 不要对白 */
-export function comicRequest(parsed, { stylePos = '', styleNeg = '', extraNeg = '', width = 832, height = 1216, textMode = 'draw' } = {}) {
+export function comicRequest(parsed, { stylePos = '', styleNeg = '', extraNeg = '', width = 832, height = 1216, textMode = 'draw', panelPositions = true } = {}) {
     let w = Number(width) || 832, h = Number(height) || 1216;
     if (parsed.spread && w < h) [w, h] = [h, w];
     const draw = textMode === 'draw' || !parsed.visual;
@@ -198,10 +239,17 @@ export function comicRequest(parsed, { stylePos = '', styleNeg = '', extraNeg = 
         const panel = Number.isInteger(c.panelIndex)
             ? `This character appears in panel ${c.panelIndex + 1} (${c.panel}) only. ${c.panelDescription || ''}`.trim()
             : '';
-        const visual = [caption.visual, panel].filter(Boolean).join('\n');
+        const visual = [panel, c.id ? `Character ${c.id}.` : '', caption.visual].filter(Boolean).join('\n');
         const prompt = visual + (draw && caption.text ? '\nText: ' + caption.text : '');
-        return { prompt, uc: c.negative, ...(c.center ? { center: c.center } : {}) };
+        let center = c.center;
+        if (!center && panelPositions && parsed.anchors) {
+            const box = parsed.anchors[c.panelIndex], peers = parsed.chars.filter(other => other.panelIndex === c.panelIndex);
+            if (box) center = { x: box.x + box.w * (peers.indexOf(c) + 1) / (peers.length + 1), y: box.y + box.h * 0.5 };
+        }
+        return { prompt, uc: c.negative, ...(center ? { center } : {}) };
     });
+    // 自动定位时使人物栏顺序与页面空间顺序一致；阅读顺序仍由画格编号决定。
+    if (panelPositions && parsed.anchors && !parsed.manual && chars.every(c => c.center)) chars.sort((a, b) => a.center.y - b.center.y || a.center.x - b.center.x);
     return { positive, negative, chars, width: w, height: h };
 }
 /** 叠在图上的对白：每格的字放在这一格（按竖着平分估算）底部，整页旁白放最上面 */
@@ -233,6 +281,19 @@ export function captionSource(v, inner) {
     return { ...v.captions, boxes: p.ok ? p.boxes : undefined };
 }
 
+// 按本项目剧情与多人物协议编写，不复制社区漫画原始提示词。
+export const COMIC_SCENE_GUIDANCE = `【逐格镜头与人物校对】
+先在 comic_plan 中为每格列出：位置、一个镜头、当前瞬间、可见人物、谁看谁、谁的哪只手接触什么、对白归属。只把这一刻可见的画面写进 image。
+每格只定格一个动作阶段；不得把 then、after that 表示的先后动作塞进同一人物段。指向自己之后捂嘴，应选其中一瞬间或拆格，不能同时要求两种手势。
+镜头决定可见范围：脸部/上半身近景不写踢箱子、走路脚步、鞋子动作；需要表现踢箱子就用全身或脚部特写。手机屏幕特写应主要画屏幕与持机的手，不再塞入两个人的完整正面肖像；若必须看两人的表情，改用肩后镜头或中景。
+每个 @panel 在位置、镜头、环境之后，补一句简短英文，说明这一格谁对谁做什么、谁看向谁或哪个物体。不能四格都只写同一背景，再靠对白区分剧情；依据剧情安排交代、动作、反应或物件特写，不凭空改变事件。
+同一人物全页保持同一个 C 编号，不同人物不得共用编号。每个人物段重复必要的固定外貌与当前镜头可见衣着，保留发色、眼色、脸型等识别特征，避免用帽子/角/发色混淆两人。不要添加正文和角色资料没有的年龄、装饰或新人物。
+同格人物条目按画面从左到右排列，不按对白先后排列；有明确的手写坐标时让描述与坐标相符。
+互动句用自然语言指明对象，例如 the black-haired man looks at the lavender-haired woman；不要只写 watching calmly、screen facing C1 或 behind C3。左右位置明确指格内位置，人物面向/目光跟随对方或物体，不默认共同看镜头。
+持物、接触与重心必须可画：写清谁拿手机、哪只手、屏幕朝谁；每只手一个主要动作，近身接触写双方对应关系。前景遮挡时不强行显示后方人物所有身体部位。
+画师、颜色方案与采样由插件设置提供，不额外加入 realistic、photorealistic、3d、油画、噪点或高权重质量词来冒充细节。自定义改编要求保留并在不改变剧情事实的前提下执行。
+输出前逐格复查镜头与身体范围、动作先后、人物编号、互动对象、构图差异。修复冲突后再输出，Text: 仍只放在所属段落最后，后面只写对白原文。`;
+
 /** 「让 AI 重写本页」的请求 */
 export function rewriteRequest(message, page, requirement, layout = {}) {
     const blocks = comicBlocks(message);
@@ -243,8 +304,8 @@ export function rewriteRequest(message, page, requirement, layout = {}) {
         + '<image> 用分段文本协议：@page（分级、实际人数词、页面形态、画格数量、布局、留白、光影、文字标签）→ 每格 @panel P1、P2…（位置大小构图环境）→ 格内每个可见人物 @character C1…（boy/girl/other、完整外貌衣着、动作表情），可选 @negative、@non_character；'
         + '每格中每个可见人物单独写一条 @character，同一人物跨格出现时分别写；每页人物条目合计最多 22 条。每格位置和人物对白归属写清楚。'
         + '需要画进图里的原句写在该段末尾的「Text: 」后面。人物段用不带数字的 boy、girl 或 other。'
-        + '\n\n' + comicLayoutInstructions(layout);
-    const user = `<comic_reference readonly="true">\n${plan ? `<thinking>\n${plan}\n</thinking>\n\n` : ''}${refs}\n</comic_reference>\n\n只重写第 ${page} 页。要求：${String(requirement || '').trim() || '保持人物、衣着、场景和剧情连续，优化这一页的分镜构图与提示词。'}`;
+        + '\n\n' + comicLayoutInstructions(layout) + '\n\n' + COMIC_SCENE_GUIDANCE;
+    const user = (layout.story ? `<original_story readonly="true">\n${layout.story}\n</original_story>\n\n` : '') + `<comic_reference readonly="true">\n${plan ? `<thinking>\n${plan}\n</thinking>\n\n` : ''}${refs}\n</comic_reference>\n\n只重写第 ${page} 页。要求：${String(requirement || '').trim() || '保留本页剧情、人物身份衣着、对白原文及先后顺序，修正镜头与动作冲突、未定义人物指代和无意义的重复构图；每格保留一个清楚的动作瞬间。'}`;
     return { system, user };
 }
 /** AI 的回复里取出新的一页 */
@@ -284,7 +345,7 @@ export function adaptRequest(story, { pages = 0, panels = '', cast = '', before 
         + '要画进图里的对白、旁白、拟声，写在对应段落末尾单独一行「Text: 」后面，用正文的语言，一格不超过两句；一段只写一个「Text: 」，几句话都接在它后面换行写。'
         + '每个 @panel 第一行先写这格在页面上的位置（top left、top right、bottom half、middle 这类英文词），插件按它把对白叠到对应的格子里。'
         + '标签用英文 NovelAI / Danbooru 标签，逗号隔开；不要写画师名和画风（画风另外加）。人物外貌照下面给的角色资料写，前后页保持一致。'
-        + '\n\n' + comicLayoutInstructions(layout)
+        + '\n\n' + comicLayoutInstructions(layout) + '\n\n' + COMIC_SCENE_GUIDANCE
         + comicLayoutExample(layout);
     const user = (cast ? `<characters>\n${cast}\n</characters>\n\n` : '')
         + (before ? `<previous readonly="true">\n${before}\n</previous>\n\n` : '')
@@ -530,7 +591,7 @@ export function createComicController(deps) {
             const [w, h] = size();
             const textMode = ['draw', 'overlay', 'none'].includes(opts().comicText) ? opts().comicText : 'draw';
             const mono = opts().comicColor === 'mono' ? 'monochrome, greyscale, screentone' : '';
-            const req = comicRequest(parsed, { stylePos: [st.pos, mono].filter(Boolean).join(', '), extraNeg: negativeFor(), width: w, height: h, textMode });
+            const req = comicRequest(parsed, { stylePos: [st.pos, mono].filter(Boolean).join(', '), extraNeg: negativeFor(), width: w, height: h, textMode, panelPositions: opts().comicPanelPositions !== false });
             if (seed !== undefined) req.seed = seed;
             running.set(job, 'run'); render(id);
             const r = await generatePage(req);
@@ -758,6 +819,8 @@ export function createComicController(deps) {
           <div class="pc-hint" data-w-info>${v ? `第 ${(r.cur ?? 0) + 1} 版 · 种子 ${esc(v.seed ?? '随机')} · ${esc(v.size || '')}${v.style ? ` · 画风「${esc(v.style)}」` : ''}` : '这一页还没出图'}</div>
           <div class="pc-seg pc-mt-s"><button class="on" data-w-tab="prompt">本页提示词</button><button data-w-tab="plan">分镜规划</button><button data-w-tab="sent">实际发送</button></div>
           <textarea class="pc-textarea mono" data-w-text></textarea>
+          <div class="pc-hint" data-w-check></div>
+          <div class="pc-hint">重画会沿用当前分镜，并应用人物归属与画格定位修正。若镜头、动作或剧情有冲突，请用「让 AI 重写本页」：会调用漫画改编 AI 并重新生图，旧图片版本保留。</div>
           <textarea class="pc-textarea small" data-w-req placeholder="给 AI 的重写要求（可不填）：比如「这页改成仰视，雨下大一点」"></textarea>
           <div class="pc-actions wrap">
             <button class="pc-btn dark" data-w="redraw">按改好的重画</button>
@@ -771,13 +834,19 @@ export function createComicController(deps) {
         panels.add(box.closeModal);
         const text = box.querySelector('[data-w-text]'), say = m => { box.querySelector('[data-w-msg]').textContent = m; };
         let draft = block.inner;
+        const checkDraft = () => {
+            const parsed = parseComicPage(draft);
+            const warnings = comicGroundingWarnings(parsed);
+            box.querySelector('[data-w-check]').textContent = !parsed.ok ? '格式提示：' + parsed.reason : warnings.length ? '分镜提示：' + warnings.join(' ') : '';
+        };
         const show = () => {
             text.readOnly = tab !== 'prompt';
             text.value = tab === 'prompt' ? draft : tab === 'plan' ? (block.plan || '（这一页前面没有 <comic_plan>）') : v ? `【正面】\n${v.sent?.positive || ''}\n\n【负面】\n${v.sent?.negative || ''}\n\n${(v.sent?.chars || []).map((c, i) => `【人物 ${i + 1}】\n${c.prompt}${c.uc ? `\n（不要：${c.uc}）` : ''}`).join('\n\n')}` : '（还没出过图）';
             box.querySelectorAll('[data-w-tab]').forEach(b => b.classList.toggle('on', b.dataset.wTab === tab));
+            checkDraft();
         };
         show();
-        text.addEventListener('input', () => { if (tab === 'prompt') draft = text.value; });
+        text.addEventListener('input', () => { if (tab === 'prompt') { draft = text.value; checkDraft(); } });
         box.addEventListener('click', async ev => {
             const t = ev.target.closest('[data-w-tab],[data-w]');
             if (!t) return;
@@ -804,8 +873,9 @@ export function createComicController(deps) {
             if (act === 'ai') {
                 t.disabled = true; say('AI 正在重写这一页…');
                 try {
-                    const layout = { panelStyle:opts().comicPanelStyle, gutter:opts().comicGutter, panels:opts().comicPanels };
-                    const { system, user } = rewriteRequest(srcOf(msg), block.page, box.querySelector('[data-w-req]').value, layout);
+                    const layout = { panelStyle:opts().comicPanelStyle, gutter:opts().comicGutter, panels:opts().comicPanels, story:storyText(msg.mes) };
+                    const reference = replacePage(srcOf(msg), block.page, { image:draft, plan:'' });
+                    const { system, user } = rewriteRequest(reference, block.page, box.querySelector('[data-w-req]').value, layout);
                     const out = parseRewrite(await askLLM(system, user, { maxTokens: 6000 }));
                     validateComicLayout(`<image>${out.image}</image>`, layout);
                     if (!snap.current()) throw new Error('聊天或原文已变化，本次改写未写入');
@@ -873,6 +943,7 @@ export function createComicController(deps) {
               <div class="pc-label">对白怎么出现</div>
               ${seg('comicText', [['draw', 'NAI 原生对白'], ['overlay', '插件叠字'], ['none', '不要对白']], 'draw')}
               <div class="pc-hint">NAI 5 一次生成整页分格漫画。整页布局放入 Base Prompt，每格人物分别放入 Character Prompts。选择「NAI 原生对白」后，气泡与对白由 NAI 一起绘制。</div>
+              ${sw('comicPanelPositions', '按画格定位人物', '规则的上下分格、四格会把人物定位到所属画格；不规则布局保持模型自动安排。手写坐标始终保留。', true)}
               <div class="pc-hint">NAI 画中文常常乱码，「插件叠字」让 NAI 只画画面，对白由浏览器显示，位置按每格开头的位置描述或 2x2 布局估算，未标位置时按顺序排列，字号跟着图片宽度缩放；下载的仍是未叠字原图。</div>
               <div class="pc-label">叠字大小</div>
               ${seg('comicCapSize', [['xs', '特小'], ['s', '小'], ['m', '中'], ['l', '大'], ['hide', '不显示']], 's')}
