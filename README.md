@@ -1,13 +1,36 @@
-# 智库 · SillyTavern 扩展
+# 智库 · NAI5 原生漫画二改
 
-作者 **if love** · 版本 **0.8.46**。NovelAI 生图、画师库、例图、角色、衣柜、标记生图与共享上传。
+原作者 **if love** · 漫画适配 **ambroselbt28-gif** · 版本 **0.8.47-native.1**。基于智库 0.8.46，使用 NAI 5 Full 一次生成整页分格漫画。
+
+## 这一版的漫画流程
+
+正文 → 智库配置的文字 AI 编写分镜 → 插件整理整页布局与逐格人物 → NAI 5 Full 生成整页图片。
+
+- 整页布局、各格环境与旁白进入 Base Prompt，每个画格中的人物、动作和对白进入各自的 Character Prompt。
+- 每条人物提示都带所属画格。每页支持最多 22 条人物提示，超限会提示拆页。
+- 新配置默认使用「NAI 原生对白」，气泡和对白随图片一起生成。已有明确的对白选项继续读取；可在漫画设置里选「NAI 原生对白」「插件叠字」或「不要对白」。
+- 漫画请求重试时继续发送完整的分人物结构。问题记录新增「漫画请求」，可查看实际模型、Base Prompt 和全部分人物字段，图片数据及凭据会被省略。
+- 已排除出提示词的角色回复可从楼层 📖 按钮手动生成，漫画目录也能选到这些楼层。自动生成只处理未隐藏的角色回复。
+- 旧的 `@page` / `@panel` 分段文本、漫画 JSON、已存图片、对白快照与多版本记录均可读取。点图片展开「重画这一页」，左右箭头切换最近 10 版。
+
+生图使用标准 `/ai/generate-image` 请求，模型为 `nai-diffusion-5-full`，通过 `v4_prompt.caption.base_caption` 和 `char_captions` 传递原生提示词。
+
+漫画改编使用「设置 → AI 预设 → 各个功能 → 漫画改编」中的文字模型。服务端拦截会作为错误显示。
 
 ## 安装与更新
 
-1. 打开酒馆「扩展」→「安装扩展」。
-2. 粘贴仓库地址：`https://github.com/ruoege49-ship-it/zhiku-tavern-helper`
-3. 安装后刷新酒馆，通过扩展设置「打开智库」、魔棒菜单「智库」或侧边票根打开。
+1. 在手机 TT 的扩展管理中停用原版智库，一次启用一份智库。
+2. 打开「扩展 → 安装扩展」，粘贴仓库地址：`https://github.com/ambroselbt28-gif/zhiku-native-comic`。
+3. 完全退出并重开 TT，确认扩展版本为 `0.8.47-native.1`。通过「打开智库」、魔棒菜单「智库」或侧边票根打开。
 4. 后续在扩展管理里点击更新，再刷新页面。
+
+进入智库「设置 → NovelAI」，选择「自己填 key」或可兼容 NAI 5 分人物请求的「第三方站点」。漫画设置的「对白怎么出现」选择「NAI 原生对白」，再点目标楼层的 📖「画成漫画」。希望回复后自动生成时，同时打开「漫画模式」和「回复写完自动出漫画」。
+
+存储使用智库原有的 `piaoce_data.json`、`piaoce_nai` 设置和浏览器图片库。漫画分镜、图片版本与折叠状态保存在消息的 `extra.zhikuComic*` 字段中。画师库与图片导出使用智库原有的数据入口。
+
+本二改版使用模拟 NAI 响应和合成聊天验证。手机 TT 与真实付费出图仍需安装后验收。
+
+原版仓库与历史版本说明见下文及 [ruoege49-ship-it/zhiku-tavern-helper](https://github.com/ruoege49-ship-it/zhiku-tavern-helper)。
 
 扩展版不需要酒馆助手。最低宿主版本为 SillyTavern 1.14.0；新版本宿主支持启停钩子，旧版本启停后刷新页面。
 
@@ -440,6 +463,8 @@ image###1girl, garden, ${"name":"小红","angle":"from front","upperBody":"sfw",
 入口为 `index.js`，完整本地运行代码为 `runtime.js`，扩展清单为 `manifest.json`。
 
 运行 `node tools/build-extension.mjs` 可从完整脚本 JSON 和 `src/index.js` 重建扩展。扩展不从远程拉取代码执行。
+
+二改回归命令为 `node dev/selftest.mjs` 和 `node dev/browser-selftest.mjs`。浏览器验证使用已安装的 Chrome，可通过 `ZHIKU_TEST_CHROME` 指定程序路径。测试临时数据放在本仓库 `.tmp/`。合成浏览器页提供 `window.stcrSelfTest()`。
 
 标记识别及过滤源文件：`src/marker-generation.js`；接入脚本：`tools/apply-markers.mjs`。模拟宿主测试已覆盖消息事件 → NovelAI 请求正文 → 图片上传 → 原位插入和保存、重复事件、普通回复、切换聊天及不发送正则。真实付费出图接口未在本轮调用。
 

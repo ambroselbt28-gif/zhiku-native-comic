@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>智库漫画合成验证</title>
+<style>
+body { margin: 16px; font-family: sans-serif; }
+#chat { max-width: 680px; margin: auto; }
+#settings { max-width: 680px; margin: auto; }
+button { min-height: 36px; }
+textarea, input, select { max-width: 100%; box-sizing: border-box; }
+.pc-seg { display: flex; flex-wrap: wrap; }
+.pc-seg .on { background: #ebc37d; }
+</style>
+<div id="chat"><div class="mes" mesid="79"><button class="pc-mes-comic">画成漫画</button><div class="mes_text">合成剧情，测试角色在雨天走进咖啡馆。</div></div></div>
+<section id="settings"></section>
+<pre id="results">运行中</pre>
+<script type="module">
+import { createComicController, onChatClick } from './runtime-comic.js';
+const checks = [];
+function check(name, value) {
+    if (!value) throw new Error(name);
+    checks.push(name);
+}
+const nextTurn = () => new Promise(resolve => setTimeout(resolve, 0));
+const page = `<image>@page
+comic page, 2 panels, vertical layout
+@panel P1
+top half, cafe interior
+@character C1
+boy, black hair, white shirt
+Text: 早上好。
+@panel P2
+bottom half, rainy window
+@character C1
+boy, black hair, white shirt, smiling
+Text: 雨停了。
+</image>`;
+const data = { options: { comicOn: true }, groups: {}, active: null };
+const message = { name: '合成角色', is_system: true, mes: 'A person enters a cafe and greets the owner.' };
+const context = { chatId: 'browser-fixture', chat: [], saveChat: async () => {} };
+context.chat[79] = message;
+const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0uoAAAAASUVORK5CYII=';
+const requests = [];
+const controller = createComicController({
+    document, getContext: () => context, getData: () => data, commit() {},
+    esc: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'),
+    askLLM: async () => page,
+    generatePage: async request => { requests.push(request); return { image }; },
+    storeImage: async () => ({ url: image }), resolveUrl: value => value,
+    notify() {}, notifyError: value => { throw new Error(value); },
+});
+globalThis.__zhikuComic = controller;
+document.addEventListener('click', onChatClick, true);
+window.stcrSelfTest = async () => {
+    document.querySelector('.pc-mes-comic').click();
+    await nextTurn();
+    check('隐藏楼层的正式按钮进入漫画流程', requests.length === 1);
+    check('生成状态收尾后显示图片', !!document.querySelector('.pc-comic-page img'));
+    check('原生人物包含画格和对白', /panel 2/.test(requests[0].chars[1].prompt) && /Text: 雨停了/.test(requests[0].chars[1].prompt));
+    check('原生对白版本按图内文字显示', !document.querySelector('.pc-comic-caps'));
+    document.querySelector('.pc-comic-page img').click();
+    check('点图展开重画按钮', document.querySelector('.pc-comic-page').classList.contains('acts'));
+    document.querySelector('[data-cgen]').click();
+    await nextTurn();
+    check('重画生成第二版', requests.length === 2 && Object.values(message.extra.zhikuComic)[0].versions.length === 2);
+    document.querySelector('[data-cv="-1"]').click();
+    await nextTurn();
+    check('可以切回第一版', Object.values(message.extra.zhikuComic)[0].cur === 0);
+    controller.openSettings(document.querySelector('#settings'));
+    check('设置默认选中 NAI 原生对白', document.querySelector('[data-cs="comicText"][data-v="draw"]').classList.contains('on'));
+    document.querySelector('[data-cs="comicText"][data-v="overlay"]').click();
+    document.querySelector('[data-cgen]').click();
+    await nextTurn();
+    check('插件叠字选择可独立使用', data.options.comicText === 'overlay' && !!document.querySelector('.pc-comic-caps'));
+    check('手动生成保留消息隐藏状态和正文', message.is_system && message.mes === 'A person enters a cafe and greets the owner.');
+    return checks;
+};
+try {
+    await window.stcrSelfTest();
+    document.querySelector('#results').textContent = JSON.stringify({ passed: checks.length, checks });
+} catch (error) {
+    document.querySelector('#results').textContent = JSON.stringify({ error: error.message, checks });
+}
+</script>
+</html>

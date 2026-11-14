@@ -1,4 +1,4 @@
-// Generated from the full script; edit build-extension.mjs and shared-upload.js.
+// 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -121,12 +121,12 @@ function parseComicPage(inner) {
     }
     const pieces = [splitText(data.page.base), splitText(data.page.non_character)];
     const chars = [];
-    for (const p of data.panels) {
+    for (const [panelIndex, p] of data.panels.entries()) {
         pieces.push(splitText(p.description), splitText(p.non_character));
         for (const c of p.characters || []) {
             const positive = String(c.positive || '').trim();
             if (!positive) continue;
-            chars.push({ panel: p.id, id: c.id, positive, negative: String(c.negative || '').trim(), ...(data.manual && c.center ? { center: c.center } : {}) });
+            chars.push({ panel: p.id, panelIndex, panelDescription: splitText(p.description).visual, id: c.id, positive, negative: String(c.negative || '').trim(), ...(data.manual && c.center ? { center: c.center } : {}) });
         }
     }
     const visual = pieces.map(p => p.visual.replace(/[,，]\s*$/, '')).filter(Boolean).join(', ');
@@ -137,7 +137,24 @@ function parseComicPage(inner) {
     // 对白按格分好，插件自己叠在图上用（NAI 画中文字常常是乱码）
     const pageTexts = [splitText(data.page.base).text, splitText(data.page.non_character).text].filter(Boolean);
     const panelTexts = data.panels.map(p => [splitText(p.description).text, splitText(p.non_character).text, ...(p.characters || []).map(c => splitText(c.positive).text)].filter(Boolean));
-    return { ok: true, base, visual, chars, manual: !!data.manual, spread, panels: data.panels.length, pageTexts, panelTexts, boxes: panelBoxes(data) };
+    // 原生整页提示保留每格的边界，场景和对白始终带所属画格。
+    const nativeVisual = [
+        pieces[0].visual,
+        pieces[1].visual,
+        ...data.panels.map((p, index) => {
+            const scene = [splitText(p.description).visual, splitText(p.non_character).visual].filter(Boolean).join(', ');
+            return `Panel ${index + 1} (${p.id}): ${scene || 'continue the scene'}`;
+        }),
+    ].filter(Boolean).join('\n');
+    const nativeTexts = [
+        ...pageTexts,
+        ...data.panels.flatMap((p, index) => {
+            const text = [splitText(p.description).text, splitText(p.non_character).text].filter(Boolean).join('\n');
+            return text ? [`Panel ${index + 1} (${p.id}): ${text}`] : [];
+        }),
+    ];
+    const nativeBase = nativeVisual + (nativeTexts.length ? '\nText: ' + nativeTexts.join('\n\n') : '');
+    return { ok: true, base, visual, nativeBase, nativeVisual, chars, manual: !!data.manual, spread, panels: data.panels.length, pageTexts, panelTexts, boxes: panelBoxes(data) };
 }
 
 /** 按每格描述里的 top / bottom / left / right 估算每格在页面上的位置（0–1），对白叠在对应那一格 */
@@ -178,9 +195,19 @@ function comicRequest(parsed, { stylePos = '', styleNeg = '', extraNeg = '', wid
     let w = Number(width) || 832, h = Number(height) || 1216;
     if (parsed.spread && w < h) [w, h] = [h, w];
     const draw = textMode === 'draw' || !parsed.visual;
-    const positive = [String(stylePos || '').trim(), draw ? parsed.base : parsed.visual].filter(Boolean).join(', ');
+    const style = draw ? splitTags(stylePos).filter(tag => bareTag(tag) !== 'no text').join(', ') : String(stylePos || '').trim();
+    const positive = [style, draw ? (parsed.nativeBase || parsed.base) : (parsed.nativeVisual || parsed.visual)].filter(Boolean).join(', ');
     const negative = [styleNeg, extraNeg, draw ? '' : COMIC_NO_TEXT_NEG].map(s => String(s || '').trim()).filter(Boolean).join(', ');
-    const chars = parsed.chars.map(c => ({ prompt: draw ? c.positive : splitText(c.positive).visual, uc: c.negative, ...(c.center ? { center: c.center } : {}) }));
+    if (parsed.chars.length > 22) throw new Error('这一页超过 NAI 5 的 22 条人物提示上限，请减少画格或拆成多页');
+    const chars = parsed.chars.map(c => {
+        const caption = splitText(c.positive);
+        const panel = Number.isInteger(c.panelIndex)
+            ? `This character appears in panel ${c.panelIndex + 1} (${c.panel}) only. ${c.panelDescription || ''}`.trim()
+            : '';
+        const visual = [caption.visual, panel].filter(Boolean).join('\n');
+        const prompt = visual + (draw && caption.text ? '\nText: ' + caption.text : '');
+        return { prompt, uc: c.negative, ...(c.center ? { center: c.center } : {}) };
+    });
     return { positive, negative, chars, width: w, height: h };
 }
 /** 叠在图上的对白：每格的字放在这一格（按竖着平分估算）底部，整页旁白放最上面 */
@@ -220,6 +247,7 @@ function rewriteRequest(message, page, requirement) {
     const system = '你是漫画分镜导演，负责改写单页漫画的分镜规划和图片提示词。沿用参考里的角色外貌、衣着、画风、色彩、对白语言和连续状态。'
         + '只输出一组 <comic_plan>…</comic_plan> 和一组 <image>…</image>，不要输出其他页、整轮规划或任何解释。'
         + '<image> 用分段文本协议：@page（分级、实际人数词、页面形态、画格数量、布局、留白、光影、文字标签）→ 每格 @panel P1、P2…（位置大小构图环境）→ 格内每个可见人物 @character C1…（boy/girl/other、完整外貌衣着、动作表情），可选 @negative、@non_character；'
+        + '每格中每个可见人物单独写一条 @character，同一人物跨格出现时分别写；每页人物条目合计最多 22 条。每格位置和人物对白归属写清楚。'
         + '需要画进图里的原句写在该段末尾的「Text: 」后面。人物段用不带数字的 boy、girl 或 other。';
     const user = `<comic_reference readonly="true">\n${plan ? `<thinking>\n${plan}\n</thinking>\n\n` : ''}${refs}\n</comic_reference>\n\n只重写第 ${page} 页。要求：${String(requirement || '').trim() || '保持人物、衣着、场景和剧情连续，优化这一页的分镜构图与提示词。'}`;
     return { system, user };
@@ -239,12 +267,21 @@ function storyText(mes) {
         .replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
         .replace(/\n{3,}/g, '\n\n').trim();
 }
+/** 宿主也用 is_system 标记已隐藏的角色回复，手动漫画允许读取这类正文。 */
+function isComicReply(message) {
+    if (!message || message.is_user) return false;
+    if (!message.is_system) return true;
+    const namedReply = String(message.name || '').trim();
+    return !!namedReply && !/^(?:system|系统)$/i.test(namedReply)
+        && !message.extra?.type && !Array.isArray(message.extra?.tool_invocations);
+}
 /** 「把这一楼画成漫画」的请求：读这一楼的正文，改编成几页漫画分镜 */
 function adaptRequest(story, { pages = 0, panels = '', cast = '', before = '', color = 'color', extra = '' } = {}) {
     const system = '你是漫画分镜导演，把小说 / 角色扮演的正文改编成日式漫画页，给 NovelAI V5 出图用。'
         + '每一页先写一组 <comic_plan>（这一页讲什么、几格、每格的构图和对白），紧跟着写一组 <image>…</image>。只输出这些块，不要任何解释。'
         + '<image> 用分段文本协议：第一行 @page，下面写这一页的整体：分级（rating:general 或 rating:sensitive）、实际人数词（如 1boy, 1girl, 2boys）、comic page、画格数量与布局、留白、光影、色调。'
         + '然后每一格写 @panel P1、@panel P2…，下面写这一格的位置大小、镜头、环境；格内每个看得见的人物写 @character C1、C2…，下面写 boy / girl / other（不带数字）、完整外貌衣着、动作表情；可选 @negative 写这个人物不要的东西。'
+        + '同一人物在不同画格出现时，每格分别写人物条目并保持身份编号和外貌一致；一页所有 @character 条目合计最多 22 条，超过时拆成多页。'
         + '要画进图里的对白、旁白、拟声，写在对应段落末尾单独一行「Text: 」后面，用正文的语言，一格不超过两句；一段只写一个「Text: 」，几句话都接在它后面换行写。'
         + '每个 @panel 第一行先写这格在页面上的位置（top left、top right、bottom half、middle 这类英文词），插件按它把对白叠到对应的格子里。'
         + '标签用英文 NovelAI / Danbooru 标签，逗号隔开；不要写画师名和画风（画风另外加）。人物外貌照下面给的角色资料写，前后页保持一致。'
@@ -462,7 +499,7 @@ function createComicController(deps) {
             if (!parsed.ok) throw new Error(parsed.reason);
             const st = style_();
             const [w, h] = size();
-            const textMode = ['draw', 'overlay', 'none'].includes(opts().comicText) ? opts().comicText : 'overlay';
+            const textMode = ['draw', 'overlay', 'none'].includes(opts().comicText) ? opts().comicText : 'draw';
             const mono = opts().comicColor === 'mono' ? 'monochrome, greyscale, screentone' : '';
             const req = comicRequest(parsed, { stylePos: [st.pos, mono].filter(Boolean).join(', '), extraNeg: negativeFor(), width: w, height: h, textMode });
             running.set(job, 'run'); render(id);
@@ -499,7 +536,7 @@ function createComicController(deps) {
     async function process(id, { manual = false } = {}) {
         if (stopped || (!manual && (!enabled() || opts().comicAuto === false))) return;
         const msg = getContext().chat?.[id];
-        if (!msg || msg.is_user || msg.is_system) return;
+        if (!isComicReply(msg) || (!manual && msg.is_system)) return;
         const blocks = comicBlocks(srcOf(msg));
         if (!blocks.length) {
             // 正文没有分镜：自动让 AI 改编（只管最新一楼，每楼只试一次，免得翻旧聊天时一楼楼改）
@@ -765,7 +802,8 @@ function createComicController(deps) {
               <div class="pc-label">颜色</div>
               ${seg('comicColor', [['color', '彩色'], ['mono', '黑白网点']], 'color')}
               <div class="pc-label">对白怎么出现</div>
-              ${seg('comicText', [['overlay', '插件叠字'], ['draw', 'NAI 画进图'], ['none', '不要对白']], 'overlay')}
+              ${seg('comicText', [['draw', 'NAI 原生对白'], ['overlay', '插件叠字'], ['none', '不要对白']], 'draw')}
+              <div class="pc-hint">NAI 5 一次生成整页分格漫画。整页布局放入 Base Prompt，每格人物分别放入 Character Prompts。选择「NAI 原生对白」后，气泡与对白由 NAI 一起绘制。</div>
               <div class="pc-hint">NAI 画中文常常乱码，「插件叠字」让 NAI 只画画面，对白由浏览器显示，位置按每格开头的位置描述或 2x2 布局估算，未标位置时按顺序排列，字号跟着图片宽度缩放；下载的仍是未叠字原图。</div>
               <div class="pc-label">叠字大小</div>
               ${seg('comicCapSize', [['xs', '特小'], ['s', '小'], ['m', '中'], ['l', '大'], ['hide', '不显示']], 's')}
@@ -804,8 +842,8 @@ function createComicController(deps) {
         const snap = pageSnapshot(id);
         if (!snap) return;
         const { c, msg, source } = snap;
-        if (msg.is_system) return;
         if (msg.is_user) { notify('只能把角色的回复画成漫画'); return; }
+        if (!isComicReply(msg)) { notify('这一楼是系统消息，请选择角色的正文回复'); return; }
         if (comicBlocks(msg.mes).length || (source && !redo)) { await process(id, { manual: true }); return; }
         if (isAdapting(id)) return;
         const story = storyText(msg.mes);
@@ -999,7 +1037,7 @@ function createComicController(deps) {
             const chatNow = getContext().chat || [];
             const rows = [];
             chatNow.forEach((m, id) => {
-                if (!m || m.is_user || m.is_system) return;
+                if (!isComicReply(m)) return;
                 const f = first.get(id);
                 if (f) { rows.push(`<button data-goto="${f.n}"><img data-cb="${esc(f.url)}" alt=""><span>第 ${id} 楼 · ${esc(f.name)}<small>${f.total} 页 · 点一下翻到这里</small></span></button>`); return; }
                 const text = storyText(m.mes);
@@ -1688,7 +1726,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.46（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.47-native.1（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1737,7 +1775,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.46';
+globalThis.__PC_VERSION = '0.8.47-native.1';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -2883,7 +2921,7 @@ function skipSigma(w, h, model) {
  * refs：{ images:[base64], strengths:[], infos:[] }（氛围，可不填）
  */
 function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false }) {
-    chars=normalizeNaiChars(chars);
+    chars=normalizeNaiChars(chars, comic);
     const s = settings();
     const model = comic ? 'nai-diffusion-5-full' : s.novelaimode;
     const isV3 = model === 'nai-diffusion-3';
@@ -3014,12 +3052,24 @@ function netError(e) {
     const where = mode === 'site' ? '第三方站点（站点可能挂了，或者地址填错了）' : mode === 'tavern' ? '酒馆后端（酒馆可能断开了，刷新页面试试）' : 'NovelAI（image.novelai.net）';
     return Object.assign(new Error(`连不上${where}，请求没发出去（${e.message}）。检查网络和 VPN，换个节点或稍后再试`), { status: 0 });
 }
-function normalizeNaiChars(chars) {
+function normalizeNaiChars(chars, comic = false) {
     const snap = v => { const n = Number(v); return Number.isFinite(n) ? +Math.min(0.9, Math.max(0.1, Math.round((n - 0.1) / 0.2) * 0.2 + 0.1)).toFixed(1) : 0.5; };
-    return (Array.isArray(chars) ? chars : []).filter(c => String(c?.prompt || '').trim()).slice(0,6).map(c => ({
-        ...c, prompt:String(c.prompt).replace(/\b1girl\b/gi,'girl').replace(/\b1boy\b/gi,'boy'),
-        ...(c.center ? {center:{x:snap(c.center.x),y:snap(c.center.y)}} : {})
-    }));
+    const coordinate = v => { const n = Number(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5; };
+    const valid = (Array.isArray(chars) ? chars : []).filter(c => String(c?.prompt || '').trim());
+    if (comic && valid.length > 22) throw new Error('这一页超过 NAI 5 的 22 条人物提示上限，请拆成多页');
+    const selected = comic ? valid : valid.slice(0, 6);
+    const position = comic ? coordinate : snap;
+    return selected.map(character => {
+        const source = String(character.prompt);
+        const textAt = comic ? source.search(/(?:^|\n)[ \t]*Text[ \t]*[:：]/i) : -1;
+        const visual = textAt < 0 ? source : source.slice(0, textAt);
+        const dialogue = textAt < 0 ? '' : source.slice(textAt);
+        const prompt = visual.replace(/\b1girl\b/gi, 'girl').replace(/\b1boy\b/gi, 'boy') + dialogue;
+        return {
+            ...character, prompt,
+            ...(character.center ? { center: { x: position(character.center.x), y: position(character.center.y) } } : {}),
+        };
+    });
 }
 // Keep the actual request's parameter shape and readable text; omit image/cache credentials by field.
 function naiRequestSnapshot(value, key = '', image = false) {
@@ -3034,10 +3084,11 @@ function generate(opts) {
     opts={...opts,src:opts.src || '其他生图入口'};
     const cfg=settings(),nai=opts.backend!=='comfy'&&cfg.naiMode!=='gpt';
     const divided=nai&&cfg.naiMode!=='tavern'&&(opts.comic||cfg.novelaimode!=='nai-diffusion-3')&&!(cfg.naiMode==='site'&&String(cfg.naiSiteSimple)==='true'&&!opts.comic);
-    const chars=divided?normalizeNaiChars(opts.chars):[];
+    const chars=divided?normalizeNaiChars(opts.chars, opts.comic):[];
     if(divided)opts.chars=chars;
     return __naiGate.run(()=>generateRequest(opts),{retryServer:nai}).catch(async error=>{
-        if(error?.name!=='AbortError'&&error?.status>=500&&error.status<=504&&chars.length){
+        // 漫画的逐格人物结构在服务器重试时保持完整。
+        if(!opts.comic&&error?.name!=='AbortError'&&error?.status>=500&&error.status<=504&&chars.length){
             globalThis.__zkLog?.('生图降级',`分人物请求连续返回 ${error.status}，合并 ${chars.length} 个人物的提示词后再试`);
             const merged={...opts,positive:[opts.positive,...chars.map(c=>c.prompt)].filter(Boolean).join(', '),negative:[opts.negative,...chars.map(c=>c.uc)].filter(Boolean).join(', '),chars:[]};
             try {
@@ -3394,7 +3445,10 @@ async function generateRequest(opts) {
     });
     let naiSent=null;
     try {
-        const r = await generateRequestInner(opts, body=>{try{naiSent=naiRequestSnapshot(body);}catch{}});
+        const r = await generateRequestInner(opts, body=>{try{
+            naiSent=naiRequestSnapshot(body);
+            if(opts.comic)globalThis.__zkLog?.('漫画请求',body.model+' · 原生整页 · '+(body.parameters?.v4_prompt?.caption?.char_captions?.length||0)+' 条人物提示',JSON.stringify(naiSent,null,1));
+        }catch{}});
         globalThis.__zkLog?.('生图', `成功 · ${((Date.now() - t0) / 1000).toFixed(1)} 秒 · ${(opts.chars || []).length ? (opts.chars.length + ' 个人物') : '没分人物'}${opts.director?.length ? ' · 带角色参考 ' + opts.director.length + ' 张' : ''}`, brief());
         return r;
     } catch (e) {
@@ -11594,7 +11648,9 @@ function onChatClick(ev) {
         const id = Number(cm.closest('.mes')?.getAttribute('mesid'));
         if (!Number.isFinite(id)) return;
         if (!N.isReady()) { toastr.warning('先到智库设置里填 NovelAI key', '智库 · 漫画'); return; }
-        void globalThis.__zhikuComic?.adapt(id);
+        const controller = globalThis.__zhikuComic;
+        if (!controller) { toastr.warning('漫画模块尚未就绪，请刷新智库后再试', '智库 · 漫画'); return; }
+        void controller.adapt(id).catch(error => toastr.error(error?.message || String(error), '智库 · 漫画'));
         return;
     }
     const b = ev.target.closest?.('.pc-mes-gen');

@@ -1,9 +1,21 @@
-function normalizeNaiChars(chars) {
+function normalizeNaiChars(chars, comic = false) {
     const snap = v => { const n = Number(v); return Number.isFinite(n) ? +Math.min(0.9, Math.max(0.1, Math.round((n - 0.1) / 0.2) * 0.2 + 0.1)).toFixed(1) : 0.5; };
-    return (Array.isArray(chars) ? chars : []).filter(c => String(c?.prompt || '').trim()).slice(0,6).map(c => ({
-        ...c, prompt:String(c.prompt).replace(/\b1girl\b/gi,'girl').replace(/\b1boy\b/gi,'boy'),
-        ...(c.center ? {center:{x:snap(c.center.x),y:snap(c.center.y)}} : {})
-    }));
+    const coordinate = v => { const n = Number(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5; };
+    const valid = (Array.isArray(chars) ? chars : []).filter(c => String(c?.prompt || '').trim());
+    if (comic && valid.length > 22) throw new Error('这一页超过 NAI 5 的 22 条人物提示上限，请拆成多页');
+    const selected = comic ? valid : valid.slice(0, 6);
+    const position = comic ? coordinate : snap;
+    return selected.map(character => {
+        const source = String(character.prompt);
+        const textAt = comic ? source.search(/(?:^|\n)[ \t]*Text[ \t]*[:：]/i) : -1;
+        const visual = textAt < 0 ? source : source.slice(0, textAt);
+        const dialogue = textAt < 0 ? '' : source.slice(textAt);
+        const prompt = visual.replace(/\b1girl\b/gi, 'girl').replace(/\b1boy\b/gi, 'boy') + dialogue;
+        return {
+            ...character, prompt,
+            ...(character.center ? { center: { x: position(character.center.x), y: position(character.center.y) } } : {}),
+        };
+    });
 }
 // Keep the actual request's parameter shape and readable text; omit image/cache credentials by field.
 function naiRequestSnapshot(value, key = '', image = false) {
@@ -18,10 +30,11 @@ function generate(opts) {
     opts={...opts,src:opts.src || '其他生图入口'};
     const cfg=settings(),nai=opts.backend!=='comfy'&&cfg.naiMode!=='gpt';
     const divided=nai&&cfg.naiMode!=='tavern'&&(opts.comic||cfg.novelaimode!=='nai-diffusion-3')&&!(cfg.naiMode==='site'&&String(cfg.naiSiteSimple)==='true'&&!opts.comic);
-    const chars=divided?normalizeNaiChars(opts.chars):[];
+    const chars=divided?normalizeNaiChars(opts.chars, opts.comic):[];
     if(divided)opts.chars=chars;
     return __naiGate.run(()=>generateRequest(opts),{retryServer:nai}).catch(async error=>{
-        if(error?.name!=='AbortError'&&error?.status>=500&&error.status<=504&&chars.length){
+        // 漫画的逐格人物结构在服务器重试时保持完整。
+        if(!opts.comic&&error?.name!=='AbortError'&&error?.status>=500&&error.status<=504&&chars.length){
             globalThis.__zkLog?.('生图降级',`分人物请求连续返回 ${error.status}，合并 ${chars.length} 个人物的提示词后再试`);
             const merged={...opts,positive:[opts.positive,...chars.map(c=>c.prompt)].filter(Boolean).join(', '),negative:[opts.negative,...chars.map(c=>c.uc)].filter(Boolean).join(', '),chars:[]};
             try {
