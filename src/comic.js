@@ -268,6 +268,8 @@ export function isComicReply(message) {
 /** 「把这一楼画成漫画」的请求：读这一楼的正文，改编成几页漫画分镜 */
 export function adaptRequest(story, { pages = 0, panels = '', cast = '', before = '', color = 'color', extra = '' } = {}) {
     const system = '你是漫画分镜导演，把小说 / 角色扮演的正文改编成日式漫画页，给 NovelAI V5 出图用。'
+        + '先按时间顺序识别正文中的独立剧情事件、场景变化和关键转折，每个剧情片段单独画一页。同一片段内的连续动作再拆成该页的多个画格。一条正文可以输出多页，每一页对应一张独立图片。'
+        + '自动页数时，识别出几个剧情片段就输出几组页面；有多个片段就必须输出多组，不要把不同剧情都塞进一张图，也不要只画开头。每页的 <comic_plan> 写明页码、对应的剧情片段和画格安排。'
         + '每一页先写一组 <comic_plan>（这一页讲什么、几格、每格的构图和对白），紧跟着写一组 <image>…</image>。只输出这些块，不要任何解释。'
         + '<image> 用分段文本协议：第一行 @page，下面写这一页的整体：分级（rating:general 或 rating:sensitive）、实际人数词（如 1boy, 1girl, 2boys）、comic page、画格数量与布局、留白、光影、色调。'
         + '然后每一格写 @panel P1、@panel P2…，下面写这一格的位置大小、镜头、环境；格内每个看得见的人物写 @character C1、C2…，下面写 boy / girl / other（不带数字）、完整外貌衣着、动作表情；可选 @negative 写这个人物不要的东西。'
@@ -275,16 +277,20 @@ export function adaptRequest(story, { pages = 0, panels = '', cast = '', before 
         + '要画进图里的对白、旁白、拟声，写在对应段落末尾单独一行「Text: 」后面，用正文的语言，一格不超过两句；一段只写一个「Text: 」，几句话都接在它后面换行写。'
         + '每个 @panel 第一行先写这格在页面上的位置（top left、top right、bottom half、middle 这类英文词），插件按它把对白叠到对应的格子里。'
         + '标签用英文 NovelAI / Danbooru 标签，逗号隔开；不要写画师名和画风（画风另外加）。人物外貌照下面给的角色资料写，前后页保持一致。'
-        + '\n\n格式示例：\n<comic_plan>第 1 页：两格。P1 远景交代咖啡馆和雨；P2 近景他看向窗外。</comic_plan>\n<image>\n@page\nrating:general, 1boy, comic page, 2 panels, vertical layout, rainy night, warm indoor light\n@panel P1\ntop half, wide shot, cafe interior, rain on window\n@panel P2\nbottom half, close-up\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, sitting, looking outside, melancholic\nText: 「又下雨了。」\n</image>';
+        + '\n\n多页格式示例（正文包含等雨和离开两个剧情片段）：\n<comic_plan>第 1 页，剧情片段一：在咖啡馆等雨。P1 窗外下雨；P2 他看向窗外。</comic_plan>\n<image>\n@page\nrating:general, 1boy, comic page, 2 panels, vertical layout, rainy night, warm indoor light\n@panel P1\ntop half, wide shot, cafe interior, rain on window\n@panel P2\nbottom half, close-up\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, sitting, looking outside, melancholic\nText: 「又下雨了。」\n</image>'
+        + '\n\n<comic_plan>第 2 页，剧情片段二：雨停后离开。P1 他走出门；P2 他沿街离去。</comic_plan>\n<image>\n@page\nrating:general, 1boy, comic page, 2 panels, vertical layout, night, wet street, street lights\n@panel P1\ntop half, medium shot, cafe entrance\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, opening door\n@panel P2\nbottom half, wide shot, wet street\n@character C1\nboy, black hair, grey eyes, white shirt, black vest, walking away\nText: 「回家吧。」\n</image>';
     const user = (cast ? `<characters>\n${cast}\n</characters>\n\n` : '')
         + (before ? `<previous readonly="true">\n${before}\n</previous>\n\n` : '')
-        + `<story>\n${story}\n</story>\n\n把 <story> 改编成${pages ? ` ${pages} 页` : '若干页（按剧情多少自己定：短的 1–2 页，长的可以 5–8 页，剧情每个转折都要有画面，不要压缩成几格）'}${color === 'mono' ? '黑白网点' : '彩色'}漫画，${panels ? `每页 ${panels} 格` : '每页 2–5 格'}。只画 <story> 里发生的事${pages ? `，${pages} 页要把整段剧情从头画到尾，平均分配` : ''}。`
+        + `<story>\n${story}\n</story>\n\n把 <story> 改编成${pages ? ` ${pages} 页` : '若干页（按剧情片段拆页，一个剧情片段一张，多个剧情片段必须输出多组 <comic_plan> + <image>，从开头一直画到结尾）'}${color === 'mono' ? '黑白网点' : '彩色'}漫画，${panels ? `每页 ${panels} 格` : '每页 2–5 格'}。只画 <story> 里发生的事${pages ? `，${pages} 页要把整段剧情从头画到尾，按剧情先后分配` : ''}。`
         + (String(extra || '').trim() ? `\n额外要求：${String(extra).trim()}` : '');
     return { system, user };
 }
 /** AI 改编出来的几页：只留能用的 <comic_plan> + <image> */
 export function parseAdapt(text) {
     const t = String(text || '');
+    const opened = [...t.matchAll(/<image\b[^>]*>/gi)].length;
+    const complete = [...t.matchAll(COMIC_BLOCK)].length;
+    if (opened !== complete) throw new Error('漫画分镜输出没有写完，请提高文字 AI 的回复长度上限，或减少固定页数后重新改编');
     const out = [];
     let last = 0;
     for (const m of t.matchAll(COMIC_BLOCK)) {
@@ -295,6 +301,7 @@ export function parseAdapt(text) {
         }
         last = m.index + m[0].length;
     }
+    if (/<comic_plan\b/i.test(t.slice(last))) throw new Error('漫画分镜输出没有写完，最后一段剧情只有规划、缺少漫画页，请提高回复长度上限后重试');
     if (!out.length) throw new Error('AI 没有按格式写出漫画页（缺少 <image>@page …</image>）');
     return out.join('\n\n');
 }
@@ -312,7 +319,7 @@ export function replacePage(message, page, { image, plan }) {
 // ───────────── 楼层里的显示与操作 ─────────────
 
 const CSS = `
-.pc-comic-redo{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+.pc-comic-redo{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:6px}
 .pc-comic-redo button{border:1px dashed currentColor;background:transparent;color:inherit;opacity:.75;border-radius:999px;padding:3px 12px;font-size:12px;cursor:pointer}
 .pc-comic{display:flex;flex-direction:column;gap:10px;margin:10px 0 4px}
 .pc-comic-page{position:relative;margin:0;border-radius:14px;overflow:hidden;border:1.5px solid var(--pc-paper,#f4efe4);background:var(--pc-paper-2,#ebe4d2);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
@@ -406,6 +413,7 @@ export function createComicController(deps) {
     style.textContent = CSS;
     doc.head.appendChild(style);
     const running = new Map(); // `${id}:${key}` -> 'wait' | 'run'
+    const redrawing = new Map(); // 楼层 -> 保留分镜的整楼重画任务
     const errors = new Map();
     const panels = new Set();
     const readers = new Set();
@@ -432,6 +440,11 @@ export function createComicController(deps) {
     const isAdapting = id => {
         const task = adapting.get(id);
         if (task && !task.current()) { adapting.delete(id); return false; }
+        return !!task;
+    };
+    const isRedrawing = id => {
+        const task = redrawing.get(id);
+        if (task && !task.current()) { redrawing.delete(id); return false; }
         return !!task;
     };
     const failure = id => {
@@ -477,7 +490,8 @@ export function createComicController(deps) {
     }
     const discard = url => { if (url) Promise.resolve().then(() => dropImage?.(url)).catch(() => {}); };
 
-    async function generateOne(id, block, { inner } = {}) {
+    async function generateOne(id, block, { inner, seed, batch } = {}) {
+        if (isRedrawing(id) && redrawing.get(id) !== batch) return false;
         const snap = pageSnapshot(id, block);
         if (!snap) return;
         const { c, msg } = snap;
@@ -492,6 +506,7 @@ export function createComicController(deps) {
             const textMode = ['draw', 'overlay', 'none'].includes(opts().comicText) ? opts().comicText : 'draw';
             const mono = opts().comicColor === 'mono' ? 'monochrome, greyscale, screentone' : '';
             const req = comicRequest(parsed, { stylePos: [st.pos, mono].filter(Boolean).join(', '), extraNeg: negativeFor(), width: w, height: h, textMode });
+            if (seed !== undefined) req.seed = seed;
             running.set(job, 'run'); render(id);
             const r = await generatePage(req);
             if (!snap.current()) return;
@@ -499,7 +514,7 @@ export function createComicController(deps) {
             if (!saved?.url) throw new Error('漫画图片保存未返回地址');
             if (!snap.current()) { discard(saved.url); return; }
             const hadExtra = !!msg.extra, hadStore = !!msg.extra?.zhikuComic, old = rec(msg, block.key);
-            const versions = [...(old?.versions || []), { url: saved.url, seed: r.sent?.seed, size: r.sent?.size, at: Date.now(), style: st.name, textMode, captions: textMode === 'overlay' ? { ok: true, pageTexts: parsed.pageTexts, panelTexts: parsed.panelTexts, boxes: parsed.boxes } : null, sent: { positive: req.positive, negative: req.negative, chars: req.chars } }];
+            const versions = [...(old?.versions || []), { url: saved.url, seed: r.sent?.seed ?? seed, size: r.sent?.size, at: Date.now(), style: st.name, textMode, captions: textMode === 'overlay' ? { ok: true, pageTexts: parsed.pageTexts, panelTexts: parsed.panelTexts, boxes: parsed.boxes } : null, sent: { positive: req.positive, negative: req.negative, chars: req.chars } }];
             const removed = versions.length > 10 ? versions.shift() : null;
             const entry = { ...(old || {}), versions, cur: versions.length - 1 };
             store(msg)[block.key] = entry;
@@ -512,17 +527,55 @@ export function createComicController(deps) {
             }
             if (removed) discard(removed.url);
             Promise.resolve(recordImage?.({ dataUrl: r.image, url: saved.url, raw: inner ?? block.inner, sent: r.sent, from: 'comic' })).catch(e => console.warn('[智库] 漫画历史保存失败', e));
+            return true;
         } catch (e) {
             errors.set(job, e?.message || String(e));
             console.warn('[智库] 漫画页没出来', e);
+            return false;
         } finally {
             running.delete(job);
             render(id);
         }
     }
 
+    /** 一次操作重画本楼所有页，分镜原文不变，每页保留原有版本。 */
+    function redrawAll(id) {
+        if (isRedrawing(id)) return redrawing.get(id).job;
+        const snap = pageSnapshot(id);
+        if (!snap || !isComicReply(snap.msg)) return Promise.resolve(null);
+        const blocks = comicBlocks(snap.source);
+        if (!blocks.length) { notify('这一楼还没有分镜，请先画成漫画'); return Promise.resolve(null); }
+        if (isAdapting(id) || [...running.keys()].some(key => key.startsWith(id + ':'))) {
+            notify('请等这一楼的生成任务完成后再整楼重画'); return Promise.resolve(null);
+        }
+        const task = { current: snap.current, total: blocks.length, completed: 0, success: 0, failed: 0, job: null };
+        redrawing.set(id, task);
+        task.job = (async () => {
+            try {
+                for (const block of blocks) {
+                    if (!snap.current()) break;
+                    render(id);
+                    const previousSeed = Number(curVer(rec(snap.msg, block.key))?.seed);
+                    let seed = Math.floor(Math.random() * 4294967294) + 1;
+                    if (seed === previousSeed) seed = seed % 4294967294 + 1;
+                    const ok = await generateOne(id, block, { seed, batch: task });
+                    if (!snap.current()) break;
+                    task.completed++;
+                    if (ok) task.success++; else task.failed++;
+                }
+                if (snap.current()) notify(`整楼重画完成，成功 ${task.success} / ${task.total} 页${task.failed ? `，失败 ${task.failed} 页，可点对应页面重试` : ''}`);
+                return { total: task.total, success: task.success, failed: task.failed, completed: task.completed };
+            } finally {
+                if (redrawing.get(id) === task) redrawing.delete(id);
+                render(id);
+            }
+        })();
+        return task.job;
+    }
+
     /** 这楼里还没出图的页，一页一页排队出 */
     async function process(id, { manual = false } = {}) {
+        if (isRedrawing(id)) return;
         if (stopped || (!manual && (!enabled() || opts().comicAuto === false))) return;
         const msg = getContext().chat?.[id];
         if (!isComicReply(msg) || (!manual && msg.is_system)) return;
@@ -545,7 +598,8 @@ export function createComicController(deps) {
             const acts = `<div class="pc-comic-acts"><button data-cgen>重画这一页</button><button data-cwork>编辑本页</button></div>`;
             const st = running.get(job);
             const busy = st ? `<div class="pc-comic-busy"><span>${st === 'wait' ? '排队中…' : '重画中…'}</span></div>` : '';
-            return `<figure class="pc-comic-page${st ? ' busy' : ''}" data-ckey="${b.key}" data-page="${b.page}"><img data-comic-src="${esc(v.url)}" alt="第 ${b.page} 页" draggable="false">${caps}${tag}${ver}${acts}${busy}</figure>`;
+            const error = errors.get(job);
+            return `<figure class="pc-comic-page${st ? ' busy' : ''}" data-ckey="${b.key}" data-page="${b.page}"><img data-comic-src="${esc(v.url)}" alt="第 ${b.page} 页" draggable="false">${caps}${tag}${ver}${acts}${busy}</figure>${error ? `<div class="pc-comic-fail">第 ${b.page} 页本次重画失败 · ${esc(error)}。点图片可再次重画。</div>` : ''}`;
         }
         const st = running.get(job);
         const err = errors.get(job);
@@ -588,7 +642,10 @@ export function createComicController(deps) {
             return;
         }
         const fail = failure(id);
-        box.innerHTML = (fail ? `<div class="pc-comic-fail"><b>重新改编失败</b><br>${esc(fail)}<br><button data-cadapt="${id}">再试一次</button><button data-cremove="${id}">不画了</button></div>` : '') + blocks.map(b => pageHtml(id, msg, b)).join('') + `<div class="pc-comic-redo">${own ? '' : `<button data-cadapt="${id}">${isAdapting(id) ? esc(adapting.get(id).text) : '重新改编这一楼'}</button>`}<button data-ccap>${capsHidden ? '显示对白' : '隐藏对白'}</button><button data-cfold="${id}">收起</button>${own ? '' : `<button data-cremove="${id}">删掉漫画</button>`}</div>`;
+        const batch = isRedrawing(id) ? redrawing.get(id) : null;
+        const progress = batch ? `<div role="status" aria-live="polite">整楼重画 · 第 ${Math.min(batch.completed + 1, batch.total)} / ${batch.total} 页 · 已成功 ${batch.success} 页${batch.failed ? ` · 失败 ${batch.failed} 页` : ''}</div>` : '';
+        const redraw = `<button data-credall="${id}" ${batch || isAdapting(id) ? 'disabled' : ''}>保留分镜，整楼重画（${blocks.length} 页）</button>`;
+        box.innerHTML = (fail ? `<div class="pc-comic-fail"><b>重新改编失败</b><br>${esc(fail)}<br><button data-cadapt="${id}">再试一次</button><button data-cremove="${id}">不画了</button></div>` : '') + blocks.map(b => pageHtml(id, msg, b)).join('') + progress + `<div class="pc-comic-redo">${redraw}${own ? '' : `<button data-cadapt="${id}" ${batch ? 'disabled' : ''}>${isAdapting(id) ? esc(adapting.get(id).text) : '重新改编这一楼'}</button>`}<button data-ccap>${capsHidden ? '显示对白' : '隐藏对白'}</button><button data-cfold="${id}">收起</button>${own ? '' : `<button data-cremove="${id}" ${batch ? 'disabled' : ''}>删掉漫画</button>`}</div>`;
         const text = el.querySelector('.mes_text');
         (text ? text.after(box) : el.appendChild(box));
         hydrate(box);
@@ -598,7 +655,7 @@ export function createComicController(deps) {
     }
     /** chatChanged：换了聊天，在途的图不再往旧楼里存 */
     function renderAll({ chatChanged = false } = {}) {
-        if (chatChanged) { chatSeq++; errors.clear(); failed.clear(); adapting.clear(); doc.querySelectorAll('.pc-comic').forEach(n => n.remove()); cancelPress({type:'cancel'}); for (const close of [...panels]) close(); }
+        if (chatChanged) { chatSeq++; errors.clear(); failed.clear(); adapting.clear(); redrawing.clear(); doc.querySelectorAll('.pc-comic').forEach(n => n.remove()); cancelPress({type:'cancel'}); for (const close of [...panels]) close(); }
         const chat = getContext().chat || [];
         for (let i = 0; i < chat.length; i++) if (chat[i]?.mes?.includes('<image') || chat[i]?.extra?.zhikuComicSrc || chat[i]?.extra?.zhikuComicFold || isAdapting(i) || failed.has(i)) render(i);
         for (const refresh of readers) refresh();
@@ -616,10 +673,11 @@ export function createComicController(deps) {
     let lastTap = null, press = null, suppressClick = false;
     function onClick(ev) {
         if (suppressClick) { suppressClick = false; ev.preventDefault(); ev.stopPropagation(); return; }
-        const ad = ev.target?.closest?.('[data-cadapt],[data-cremove],[data-cfold],[data-cunfold],[data-ccap]');
+        const ad = ev.target?.closest?.('[data-cadapt],[data-cremove],[data-cfold],[data-cunfold],[data-ccap],[data-credall]');
         if (ad) {
             ev.stopPropagation();
-            if (ad.dataset.cadapt) { if (!isAdapting(Number(ad.dataset.cadapt))) void adapt(Number(ad.dataset.cadapt), { redo: true }); }
+            if (ad.hasAttribute('data-credall')) { void redrawAll(Number(ad.dataset.credall)); }
+            else if (ad.dataset.cadapt) { if (!isAdapting(Number(ad.dataset.cadapt))) void adapt(Number(ad.dataset.cadapt), { redo: true }); }
             else if (ad.dataset.cremove) { if (win.confirm('删掉这一楼的漫画？画好的图也会一起删掉。只想先不看，点「收起」就行。')) void unadapt(Number(ad.dataset.cremove)); }
             else if (ad.dataset.cfold || ad.dataset.cunfold) void setFold(Number(ad.dataset.cfold || ad.dataset.cunfold), !!ad.dataset.cfold);
             else if (ad.hasAttribute('data-ccap')) { capsHidden = !capsHidden; renderAll(); }
@@ -627,6 +685,7 @@ export function createComicController(deps) {
         }
         const t = targetOf(ev);
         if (!t) return;
+        if (isRedrawing(t.id) && ev.target.closest('[data-cgen],[data-cwork]')) { notify('整楼重画进行中，请等待本轮完成'); return; }
         const cv = ev.target.closest('[data-cv]');
         if (cv) {
             ev.stopPropagation();
@@ -701,6 +760,7 @@ export function createComicController(deps) {
             if (t.dataset.wTab) { tab = t.dataset.wTab; show(); return; }
             const act = t.dataset.w;
             if (act === 'close') { box.closeModal(); return; }
+            if (isRedrawing(id) && ['redraw', 'ai', 'del'].includes(act)) { say('整楼重画进行中，请等待本轮完成'); return; }
             if (!snap.current()) { say('聊天或原文已变化，请重新打开这一页'); return; }
             if (act === 'dl' && v) { const a = doc.createElement('a'); a.href = await resolveUrl(v.url); a.download = `漫画_第${block.page}页.png`; doc.body.appendChild(a); a.click(); a.remove(); return; }
             if (act === 'del' && v) {
@@ -731,6 +791,7 @@ export function createComicController(deps) {
     }
     /** 把新写的一页换进这楼的正文，旧版本跟着搬过去，然后出图 */
     async function applyNewPage(id, block, page, snap = pageSnapshot(id, block)) {
+        if (isRedrawing(id)) return;
         if (!snap?.current()) return;
         const { c, msg, source } = snap, restore = checkpoint(msg), old = rec(msg, block.key);
         const next = replacePage(source, block.page, page), where = setSrc(msg, next);
@@ -788,10 +849,11 @@ export function createComicController(deps) {
               <div class="pc-label">页面尺寸（跨页自动横过来）</div>
               ${seg('comicSize', [['832x1216', '竖'], ['1216x832', '横'], ['1024x1024', '方']], '832x1216')}
               <div class="pc-label">「画成漫画」每楼画几页</div>
-              ${seg('comicPages', [[0, '自动'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']], 0)}
+              ${seg('comicPages', [[0, '按剧情'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']], 0)}
               <div class="pc-label">每页几格</div>
               ${seg('comicPanels', [['', '自动'], ['1–2', '1–2'], ['3–4', '3–4'], ['5–6', '5–6']], '')}
-              <div class="pc-hint">「自动」时 AI 按剧情长短分：短的 1–2 页，长的 5–8 页。页数多、每页格数少，剧情切得越细。</div>
+              <div class="pc-hint">「按剧情」时，每个剧情事件或场景转折单独一张漫画页，一条正文可以生成多张。每张页内再安排多个分格，按顺序覆盖整段正文。也可指定固定页数。</div>
+              <div class="pc-hint">已有分镜需要重新拆页时，点楼层下的「重新改编这一楼」。「保留分镜，整楼重画」沿用已存页数，逐页生成新版本。</div>
               <label class="pc-field pc-mt-s"><span>给 AI 的改编要求（可不填）</span><textarea class="pc-textarea small" data-cstr="comicExtra" placeholder="比如：多用特写和留白；对白少一点；每页最多 3 格；不要画 user 的脸">${esc(o.comicExtra || '')}</textarea></label>
               <label class="pc-field pc-mt-s"><span>漫画负面（加在画风负面后面）</span><textarea class="pc-textarea small mono" data-cstr="comicNeg">${esc(neg)}</textarea></label>
               <div class="pc-actions wrap" style="margin-top:6px"><button class="pc-pill dashed tiny" data-cnegreset>恢复默认负面</button></div>
@@ -816,6 +878,7 @@ export function createComicController(deps) {
 
     // ── 把一楼画成漫画：AI 读正文写分镜，存进这楼，再一页页出图 ──
     async function adapt(id, { pages = 0, redo = false } = {}) {
+        if (isRedrawing(id)) { notify('整楼重画进行中，请等待本轮完成'); return; }
         const snap = pageSnapshot(id);
         if (!snap) return;
         const { c, msg, source } = snap;
@@ -831,7 +894,7 @@ export function createComicController(deps) {
         try {
             const prevMsg = (c.chat || []).slice(0, id).reverse().find(m => m && !m.is_system && m.extra?.zhikuComicSrc);
             const before = prevMsg ? comicBlocks(srcOf(prevMsg)).slice(-1).map(b => b.inner).join('') : '';
-            const { system, user } = adaptRequest(story.slice(0, 12000), { pages: pages || Number(opts().comicPages) || 0, panels: opts().comicPanels || '', cast: deps.castText?.() || '', before, color: opts().comicColor === 'mono' ? 'mono' : 'color', extra: opts().comicExtra || '' });
+            const { system, user } = adaptRequest(story, { pages: pages || Number(opts().comicPages) || 0, panels: opts().comicPanels || '', cast: deps.castText?.() || '', before, color: opts().comicColor === 'mono' ? 'mono' : 'color', extra: opts().comicExtra || '' });
             const want = pages || Number(opts().comicPages) || 6;
             const out = parseAdapt(await askLLM(system, user, { maxTokens: Math.min(16000, 3000 + 1800 * want) }));
             if (!snap.current()) return;
@@ -870,6 +933,7 @@ export function createComicController(deps) {
         if (snap.current()) render(id);
     }
     async function unadapt(id) {
+        if (isRedrawing(id)) { notify('整楼重画进行中，请等待本轮完成'); return; }
         if (failed.delete(id)) { render(id); return; }
         const snap = pageSnapshot(id);
         if (!snap || isAdapting(id)) return;
@@ -1092,11 +1156,11 @@ export function createComicController(deps) {
     }
 
     return {
-        process, render, renderAll, openBook, generateOne, adapt, unadapt, openSettings,
+        process, render, renderAll, openBook, generateOne, adapt, unadapt, openSettings, redrawAll,
         status(id) {
             const msg = getContext().chat?.[id], blocks = comicBlocks(srcOf(msg));
             return {
-                busy: isAdapting(id) || [...running.keys()].some(key => key.startsWith(id + ':')),
+                busy: isRedrawing(id) || isAdapting(id) || [...running.keys()].some(key => key.startsWith(id + ':')),
                 images: blocks.filter(block => rec(msg, block.key)?.versions?.some(version => version.url)).length,
                 pages: blocks.length,
                 error: failure(id) || blocks.map(block => errors.get(`${id}:${block.key}`)).filter(Boolean).join('；'),

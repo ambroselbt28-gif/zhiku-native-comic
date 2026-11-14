@@ -43,11 +43,12 @@ const context = { chatId: 'browser-fixture', chat: [], saveChat: async () => {} 
 context.chat[79] = message;
 const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0uoAAAAASUVORK5CYII=';
 const requests = [];
+let aiCalls = 0;
 let drawBarrier = null;
 const controller = createComicController({
     document, getContext: () => context, getData: () => data, commit() {},
     esc: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'),
-    askLLM: async () => page,
+    askLLM: async () => { aiCalls++; return page; },
     generatePage: async request => { requests.push(request); if (drawBarrier) await drawBarrier; return { image }; },
     storeImage: async () => ({ url: image }), resolveUrl: value => value,
     notify() {}, notifyError: value => { throw new Error(value); },
@@ -105,6 +106,21 @@ window.stcrSelfTest = async () => {
     document.querySelector('[data-backfill-start]').click(); await nextTurn();
     check('指定单楼继续补图', controller.status(81).images === 1 && batch.snapshot().rows.length === 1);
     check('手机展示副 API 来源且没有横向溢出', document.querySelector('[data-backfill-api]').textContent.includes('合成副 API') && document.documentElement.scrollWidth <= window.innerWidth);
+    document.querySelector('[data-backfill-close]').click();
+    const multiPage = page + '\n\n' + page.replace('cafe interior', 'library interior').replace('雨停了。', '找到书了。');
+    context.chat[82] = { name: '合成角色', mes: multiPage };
+    const row = document.createElement('div'); row.className = 'mes'; row.setAttribute('mesid', '82'); row.innerHTML = '<div class="mes_text">等雨后去图书馆，两段剧情。</div>'; document.querySelector('#chat').append(row);
+    await controller.process(82, { manual: true });
+    check('一条正文展示两张独立漫画页', row.querySelectorAll('.pc-comic-page').length === 2);
+    const previousCalls = aiCalls, previousDraws = requests.length;
+    drawBarrier = new Promise(resolve => { release = resolve; });
+    row.querySelector('[data-credall]').click(); await nextTurn();
+    check('正式整楼重画按钮展示进度并防止重复', row.querySelector('[data-credall]').disabled && row.querySelector('[role="status"]').textContent.includes('1 / 2'));
+    release(); drawBarrier = null; await nextTurn();
+    check('一次操作重画全部两页并保留旧版', requests.length === previousDraws + 2 && Object.values(context.chat[82].extra.zhikuComic).every(record => record.versions.length === 2));
+    check('整楼重画保留分镜并复用提示词', context.chat[82].mes === multiPage && aiCalls === previousCalls && requests[previousDraws].positive === requests[previousDraws - 2].positive && requests[previousDraws + 1].positive === requests[previousDraws - 1].positive);
+    check('整楼重画使用新种子且收尾恢复按钮', requests.slice(previousDraws).every(request => Number.isSafeInteger(request.seed)) && !row.querySelector('[data-credall]').disabled);
+    check('多页和整楼操作在手机宽度内换行', document.documentElement.scrollWidth <= window.innerWidth);
     return checks;
 };
 try {
