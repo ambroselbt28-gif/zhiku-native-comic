@@ -40,6 +40,8 @@ const plan = { source:story, title:'来电', moment:'拿起手机的瞬间', rat
     { name:'褚星澜', registered:true,gender:'boy',pose:'sitting up straight',action:'reaching for smartphone',expression:'composed',gaze:'looking down',gaze_target:'smartphone',body_direction:'facing table',head_direction:'head down',hands:'right hand reaching for smartphone',outfit:'charcoal suit',position:{x:0.6,y:0.5,depth:'foreground'} },
     { name:'墨辞',registered:true,gender:'boy',pose:'standing',action:'watching calmly',expression:'calm',gaze:'looking at another',gaze_target:'seated man',body_direction:'facing seated man',head_direction:'head turned to the right',hands:'arms at sides',outfit:'grey tank top',position:{x:0.3,y:0.45,depth:'background'} },
 ] };
+plan.scene_description = 'The standing man watches the seated man reach toward the phone on the table.';
+plan.characters[0].action_description = 'His right hand is above the phone but has not grasped it yet.';
 for (const [label, code] of [['源码', original], ['发布代码', generated]]) {
     const compiled = code.compileIllustrationPlan(plan, [{on:true,char:a},{on:true,char:b}], story);
     assert.match(compiled.picks[0].tags,/looking at smartphone/);
@@ -52,8 +54,13 @@ for (const [label, code] of [['源码', original], ['发布代码', generated]])
         const payload = buildParameters(sent);
         const positive = JSON.stringify({base:payload.v4_prompt.caption.base_caption,characters:payload.v4_prompt.caption.char_captions});
         assert(!positive.includes('looking at viewer')); assert(!positive.includes('front view'));
+        assert(positive.includes(plan.scene_description), '英文场景关系说明进入实际请求');
+        assert(positive.includes(plan.characters[0].action_description), '个人动作句在分栏与合并请求均保留');
         assert(positive.includes('looking at smartphone')); assert(positive.includes('looking at seated man')); assert(positive.includes('cinematic lighting')); assert(positive.includes('artist:fixture'));
         if (!simple) {
+            assert(sent.chars[0].prompt.includes(plan.characters[0].action_description));
+            assert(!sent.chars[1].prompt.includes(plan.characters[0].action_description), '个人动作不串到另一人');
+            assert(!sent.positive.includes(plan.characters[0].action_description), '个人动作不重复灌入公共场景');
             assert(!sent.chars[0].prompt.includes('standing')); assert(!sent.chars[0].prompt.includes('arms at sides'));
             assert(sent.chars[1].prompt.includes('standing')); assert(sent.chars[1].prompt.includes('arms at sides'));
         }

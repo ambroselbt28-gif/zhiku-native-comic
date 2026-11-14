@@ -139,6 +139,8 @@ window.stcrSelfTest = async () => {
     renderPrompt();
     check('正文配图编辑器保留自定义提示词', promptBox.querySelector('textarea').value === promptOptions.illustPrompt);
     promptBox.querySelector('[data-act="illprompt-default"]').click(); await nextTurn();
+    check('NAI 5 默认包含英文场景和个人动作说明', promptBox.querySelector('textarea').value.includes('scene_description') && promptBox.querySelector('textarea').value.includes('action_description') && promptBox.querySelector('textarea').value.includes('NovelAI V5'));
+    check('恢复新默认仍只修改草稿', promptOptions.illustPrompt === '玩家自定义正文配图提示词');
     check('恢复默认加入视线对象和互动手部规则', promptBox.querySelector('textarea').value.includes('gaze_target') && promptBox.querySelector('textarea').value.includes('接触部位'));
     promptBox.querySelector('[data-act="illprompt-save"]').click(); await nextTurn();
     promptBox.querySelector('[data-act="illprompt-preview"]').click(); await nextTurn();

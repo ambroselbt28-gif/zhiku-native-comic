@@ -6,7 +6,7 @@ export function renderIllustrationEditor(options, draft, hasRequest, esc) {
       <style>.pc-illust-editor textarea,.pc-illust-request{scrollbar-width:none;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}.pc-illust-editor textarea::-webkit-scrollbar,.pc-illust-request::-webkit-scrollbar{display:none}.pc-illust-editor textarea{min-height:240px;width:100%;box-sizing:border-box}.pc-illust-request{max-height:65vh;font-size:14px;line-height:1.6}</style>
       <label class="pc-field"><span>正文转生图提示词 · SFW / NSFW 共用</span><textarea class="pc-textarea" data-bind="illustPromptDraft" rows="10">${esc(draft ?? illustrationPrompt(options))}</textarea></label>
       <div class="pc-actions wrap"><button class="pc-btn dark" data-act="illprompt-save">保存提示词</button><button class="pc-btn" data-act="illprompt-default">恢复默认</button><button class="pc-btn" data-act="illprompt-preview">预览当前请求</button><button class="pc-btn" data-act="illprompt-last" ${hasRequest?'':'disabled'}>最近组装的请求</button></div>
-      <div class="pc-hint">保存后用于下一次自动插图。恢复默认先填回编辑框，保存才生效。默认规则明确视线对象、身体朝向、手部接触与互动双方，张数沿用上面的选择。修改输出格式时请保留画面字段。预览可查看本次请求。</div>
+      <div class="pc-hint">保存后用于下一次画面方案。恢复默认先填回编辑框，保存才生效。NAI 5 默认规则结合标签与简短英文关系说明，明确视线对象、动作归属、手部接触和光线。张数沿用上面的选择。已有图片标记需重新编写方案才会采用新规则。预览可查看本次请求。</div>
     </section>`;
 }
 

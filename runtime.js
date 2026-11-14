@@ -1712,21 +1712,47 @@ sharp gaze、cold gaze、watching calmly 描述神态，还需给出具体视线
 例二为一人递书，另一人接书。前者 action=offering book、hands=right hand holding book，后者 action=reaching for book、hands=left hand reaching toward book，场景写 book between them。根据原文决定各自看书还是看对方。
 输出前检查人物身份、动作对象、视线对象、可见双手、身体姿势、距离与画面位置是否相容。`;
 
-const DEFAULT_ILLUSTRATION_PROMPT = ILLUSTRATION_PROMPT_BASE
+const LEGACY_INTERACTION_PROMPT = ILLUSTRATION_PROMPT_BASE
     .replace('【输出格式】', INTERACTION_GUIDANCE + '\n\n【输出格式】')
     .replace('gaze（视线）、outfit', 'gaze（视线）、gaze_target（视线对象）、body_direction（身体朝向）、head_direction（头部朝向）、hands（可见手部动作）、interaction_role（互动标签）、outfit')
     .replace('每个标签都写成 danbooru 风格的短标签（1 到 4 个词），不要写成整句或长短语：写 hand over mouth、covering mouth、hug from behind、tail around waist、whispering，不写 mouth and nose covered by boy\'s large hand、whispering near her ear 这类句子。', '优先使用 danbooru 风格的短标签，必要时加简短英文说明，明确谁对谁做什么和具体接触位置。');
+
+// 依据 NovelAI V5 专用技能与官方字段规则重新编写，供两个正文选镜入口共用。
+const NAI_STORY_GUIDANCE = `【NovelAI V5 画面表达】
+用常见英文标签锁定人物动作、物件和机位，用一到两句简短英文说明标签无法说清的空间关系、动作对象和遮挡。自然语言是画面说明，不冒充已验证的 Danbooru 标签。优先表达这一瞬间的核心动作和人物反应，删掉重复、互斥或与画面无关的词。
+场景段负责地点、机位、光线和人物之间的关系。每个人自己的动作、视线、持物、服装放在自己的角色段。固定发型、发色、眼睛、年龄感和体型由角色库提供，不为增加细节而重新设计，也不因为忧郁、疲倦就擅自添加伤疤、胡茬、脏污或衰老特征。
+多人关系用明确对象写清谁对谁做什么，例如 The man on the left offers a cup to the seated woman. 每个人只补自己的动作。source#、target#、mutual# 可辅助绑定同一个互动，仍需明确对象。不要让每个人都复制同一套动作。
+每人的视线要有实际目标，looking at another 需对应画面中的对象，交谈并不强制双方始终对视。看手机、看窗外、看对方、闭眼按正文分别处理。只有正文明确面对观看者、自拍或合影时才用 looking at viewer。
+检查动作发生阶段和受力。伸手去拿与已经握住选一刻，坐姿有承重座面，倚靠有支撑物，每只可见的手只承担相容的动作。不要让双方隔着桌子却贴身拥抱，不要补写裁切外的手指或背面看不见的眼睛。
+按关键动作选一种景别和一种主机位。双人递物要留出双方的手与道具，情绪重点可用近景，交代环境才用远景。同一张不堆 close-up、full body、wide shot；侧脸、三分之四和背面也只选符合正文的一种，不为好看而把人物强行转向镜头。
+背景保留正文中的地点与少量关键大物件，形成明确前后关系。光线说明来源、方向及照到的物体，例如窗光落在脸侧、壁炉光映在衣褶。需要细节时写可见的头发层次、布料褶皱、玻璃反光等具体内容，不机械堆 detailed、8k 或添加 film grain、noise、sketch 等画风词。
+保留当前画师串与用户风格。不要自行生成 artist:、质量词、负面词、采样参数、A1111 权重或整串高权重。high complexity、ultra complexity、depthness、fur dataset、background dataset 都不是通用画质前缀，不自动添加。实际画师、质量和负面由插件配置合并。
+位置描述应与角色顺序及坐标相容，近景被遮挡的人不能同时写成无遮挡全身。输出前检查人数、外貌归属、动作对象、视线、手与道具、景别、光源是否一致。只输出最终画面，不输出推理过程。`;
+
+const STORY_COUNT_RULE = '必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。围绕已有剧情选择不同瞬间、人物反应或景别；同一事件可补充不改变剧情的观察角度，不编造新人物、新事件或未发生的结果。';
+const LEGACY_COUNT_RULE = ILLUSTRATION_PROMPT_BASE.split('\n')[3];
+
+const DEFAULT_ILLUSTRATION_PROMPT = LEGACY_INTERACTION_PROMPT
+    .replace(LEGACY_COUNT_RULE, STORY_COUNT_RULE)
+    .replace('你负责根据小说正文选择插图瞬间，并整理画面信息。', '你负责把小说中的可见瞬间转为 NovelAI V5 插图方案，兼容标签与简短英文画面说明。')
+    .replace('每个入画人物分别填写：身体姿势、朝向和重心；肢体动作、双手位置和物品；表情、视线和头部朝向；衣着状态；画面位置和前后层次。', '每个入画人物填写当前镜头可见且有意义的姿势、动作、表情、视线、服装和位置；可选细节无依据或不可见时留空，不为了填满字段增加动作。')
+    .replace('整体构图填写：景别（特写到远景）、机位（平视、俯视、仰视、正侧背面）、主体位置、视觉重点、留白、前后层次、地点、关键物品、时间、光线和氛围。', '整体构图围绕一个视觉重点，选择匹配的景别、机位和前后层次，并写出有来源的光线与必要的环境细节。')
+    .replace('【输出格式】', NAI_STORY_GUIDANCE + '\n\n【输出格式】')
+    .replace('scene：英文环境、地点和关键物品标签。', 'scene：英文环境、地点和关键物品标签。\nscene_description：一到两句简短英文，补充本图最关键的可见空间或互动关系，不重复外貌；无需补充时为 ""。')
+    .replace('action（动作）、expression', 'action（动作标签）、action_description（可选简短英文句子，说明该人物动作对象和持物归属）、expression')
+    .replace('不得把人物标签合并到场景段。', '场景的简短英文关系说明放在 Scene Composition 段末尾，个人的英文动作说明放在对应 Character Prompt 段内。句子不要包含换行、分号、竖线或协议标题。不得把人物标签合并到场景段。');
 
 function illustrationPrompt(options = {}) {
     const p = typeof options.illustPrompt === 'string' ? options.illustPrompt : '';
     if (!p.trim()) return DEFAULT_ILLUSTRATION_PROMPT;
     const comparable = p.replace(/\r\n/g, '\n');
     // 仅升级完整匹配的旧默认文本，玩家编辑过的文本继续原样读取。
-    if (comparable === ILLUSTRATION_PROMPT_BASE) return DEFAULT_ILLUSTRATION_PROMPT;
-    const oldCountRules = ['遵循输入 imageLimit（玩家设置的最多张数），不自行固定张数。', '按输入 imageLimit 写满张数：正文够长就写满 imageLimit 张，分散在正文前中后不同位置；只有正文太短、实在找不出这么多不同瞬间时才少写。'];
-    for (const line of oldCountRules) {
-        const upgraded = comparable.replace(line, '必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。正文里的瞬间不够时自己编：同一场景换景别和角度（特写、背影、俯拍）、写在场人物的反应、补正文没细写但合理的前后一刻，直到写满为止，不能少写。');
-        if (upgraded === ILLUSTRATION_PROMPT_BASE || upgraded === DEFAULT_ILLUSTRATION_PROMPT) return DEFAULT_ILLUSTRATION_PROMPT;
+    const defaults = [ILLUSTRATION_PROMPT_BASE, LEGACY_INTERACTION_PROMPT, DEFAULT_ILLUSTRATION_PROMPT];
+    const countRules = [LEGACY_COUNT_RULE, STORY_COUNT_RULE, '遵循输入 imageLimit（玩家设置的最多张数），不自行固定张数。', '按输入 imageLimit 写满张数：正文够长就写满 imageLimit 张，分散在正文前中后不同位置；只有正文太短、实在找不出这么多不同瞬间时才少写。'];
+    for (const template of defaults) {
+        for (const line of countRules) {
+            if (comparable === template.replace(template.split('\n')[3], line)) return DEFAULT_ILLUSTRATION_PROMPT;
+        }
     }
     return p;
 }
@@ -1777,6 +1803,12 @@ function compileIllustrationPlan(plan, roster, story) {
         // Count and rating are compiled once, from structured fields.
         return value.split(/[,;]+/).map(s => s.trim()).filter(s => s && !/^(?:\d+(?:boys?|girls?|others?)|solo|no humans|sfw|nsfw)$/i.test(s)).join(', ');
     };
+    // 自然语言保留完整句子；禁止串入标记协议，避免改变人物归属。
+    const narrative = value => {
+        if (value == null || value === '') return '';
+        if (typeof value !== 'string' || /[㐀-鿿豈-﫿$<>|;\r\n]|(?:Scene Composition|Character\s+\d+\s+(?:Prompt|UC))\s*:/i.test(value)) throw new Error('画面说明需要单行英文，不能包含人物标记或协议分隔符');
+        return value.trim();
+    };
     const composition = plan.composition;
     if (!composition || typeof composition !== 'object') throw new Error('画面方案缺少镜头构图 composition');
     for (const field of ['shot', 'camera', 'layout', 'lighting']) if (!clean(composition[field])) throw new Error(`镜头构图缺少 ${field}`);
@@ -1804,10 +1836,10 @@ function compileIllustrationPlan(plan, roster, story) {
         const targetTag = gazeTarget && !/\beyes closed\b/i.test(gaze.replace(/_/g, ' ')) && !gaze.toLowerCase().includes('looking at ' + gazeTarget.toLowerCase()) ? 'looking at ' + gazeTarget : '';
         const tags = [person.registered ? '' : person.appearance, person.pose, person.body_direction, person.action, person.hands, person.interaction_role, person.expression, gaze, targetTag, person.head_direction,
             char.outfitMode === 'fixed' ? '' : person.outfit, pos.x<0.4?'on left':pos.x>0.6?'on right':'centered', pos.depth, person.tags].map(clean).filter(Boolean).join(', ');
-        picks.push({ char, tags, x:pos.x, y:pos.y });
+        picks.push({ char, tags: [tags, narrative(person.action_description)].filter(Boolean).join(', '), x:pos.x, y:pos.y });
     }
     const count = picks.length ? Object.entries(counts).filter(([,n])=>n).map(([g,n])=>`${n}${g}${n>1?'s':''}`).join(', ') : 'no humans';
-    const scene = [rating, count, clean(required('scene')), ...['shot','camera','layout','lighting'].map(k=>clean(composition[k])), clean(plan.interaction)].filter(Boolean).join(', ');
+    const scene = [rating, count, clean(required('scene')), ...['shot','camera','layout','lighting'].map(k=>clean(composition[k])), clean(plan.interaction), narrative(plan.scene_description)].filter(Boolean).join(', ');
     return { scene, picks, cast, summary:{source,title,moment,rating} };
 }
 
@@ -1946,7 +1978,7 @@ function renderIllustrationEditor(options, draft, hasRequest, esc) {
       <style>.pc-illust-editor textarea,.pc-illust-request{scrollbar-width:none;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}.pc-illust-editor textarea::-webkit-scrollbar,.pc-illust-request::-webkit-scrollbar{display:none}.pc-illust-editor textarea{min-height:240px;width:100%;box-sizing:border-box}.pc-illust-request{max-height:65vh;font-size:14px;line-height:1.6}</style>
       <label class="pc-field"><span>正文转生图提示词 · SFW / NSFW 共用</span><textarea class="pc-textarea" data-bind="illustPromptDraft" rows="10">${esc(draft ?? illustrationPrompt(options))}</textarea></label>
       <div class="pc-actions wrap"><button class="pc-btn" data-act="image-backfill">补未生图楼层</button><button class="pc-btn dark" data-act="illprompt-save">保存提示词</button><button class="pc-btn" data-act="illprompt-default">恢复默认</button><button class="pc-btn" data-act="illprompt-preview">预览当前请求</button><button class="pc-btn" data-act="illprompt-last" ${hasRequest?'':'disabled'}>最近组装的请求</button></div>
-      <div class="pc-hint">保存后用于下一次自动插图。恢复默认先填回编辑框，保存才生效。默认规则明确视线对象、身体朝向、手部接触与互动双方，张数沿用上面的选择。修改输出格式时请保留画面字段。预览可查看本次请求。</div>
+      <div class="pc-hint">保存后用于下一次画面方案。恢复默认先填回编辑框，保存才生效。NAI 5 默认规则结合标签与简短英文关系说明，明确视线对象、动作归属、手部接触和光线。张数沿用上面的选择。已有图片标记需重新编写方案才会采用新规则。预览可查看本次请求。</div>
     </section>`;
 }
 
@@ -2282,7 +2314,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.54-native.11（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.12（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2331,7 +2363,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.54-native.11';
+globalThis.__PC_VERSION = '0.8.60-native.12';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3796,7 +3828,7 @@ const COMFY_WORKFLOW = {
 };
 const comfyUrl = (s = settings()) => String(s.comfyUrl || '').trim().replace(/\/+$/, '');
 const comfyReady = (s = settings()) => !!comfyUrl(s);
-const chatBackend = (s = settings()) => String(s.comfyChat) === 'true' && comfyReady(s) ? 'comfy' : 'nai';
+const chatBackend = (s = settings()) => String(s.comfyChat) === 'true' ? 'comfy' : 'nai';
 /** 没填过的话，从酒馆自带「图片生成」插件的 ComfyUI 设置里搬过来；那边也没有就用本机 8188 */
 function comfyAutoConfig() {
     const s = settings();
@@ -4175,6 +4207,7 @@ async function generateRequestInner(opts, recordNai = () => {}, responseInfo = {
         chars: s.naiMode==='tavern'?[]:(params.characterPrompts || []).map(c => c.prompt),
         seed: params.seed,
         model,
+        params: { model, sampler: params.sampler, steps: params.steps, cfg: params.scale, ...(s.naiMode !== 'tavern' ? { rescale: params.cfg_rescale } : {}), ...(!model.includes('nai-diffusion-5') || s.naiMode !== 'tavern' ? { schedule: params.noise_schedule } : {}), width: params.width, height: params.height },
         director: params.director_reference_images_cached?.length || 0,
         ...(opts.i2i?.image ? { i2i: { strength: params.strength, noise: params.noise } } : {}),
     };
@@ -4806,6 +4839,40 @@ async function makeSampleFor(ref, templateId, { soloWeight = getData().options.s
     return image;
 }
 
+/**
+ * 批量里的一张。job：{ ref（画师库里有的才有）, text, templateId, char, charTags, charNeg, charRef }
+ * 返回 { image, saved }：画师库里有这串、又不是画角色的，照旧存进例图；别的不存，等用户勾选再存
+ */
+async function makeBatchImage(job) {
+    const d = getData();
+    const tpl = d.templates[job.templateId] || d.templates.sfw_bust;
+    const ref = job.ref && M.resolveTicket(d, job.ref) ? job.ref : null;
+    if (ref && !job.char) return { image: await makeSampleFor(ref, tpl.id, { soloWeight: job.soloWeight ?? 1 }), saved: true };
+    let fixed = ref ? M.ticketString(d, ref) : String(job.text || '');
+    const neg0 = ref ? M.ticketNeg(d, ref) : '';
+    const w = Number(d.options.sampleSoloWeight) || 1;
+    const one = M.parseArtistString(fixed);
+    if (w !== 1 && one.members.length === 1 && Math.abs(one.members[0].weight - 1) < 0.001 && !new RegExp(`::\\s*${one.members[0].tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*::`).test(fixed)) fixed = fixed.replace(one.members[0].tag, `${w}::${one.members[0].tag}::`);
+    if (!job.char) return { image: await generateSample({ fixed, template: tpl, neg: neg0 }), saved: false };
+    // 画角色：角色外貌 + 固定的衣服 + 模板的景别（照角色页「生成这个角色的图」）
+    const shot = tpl.shot || 'bust';
+    const SHOT = { head: '1.4::portrait::, close-up, upper body, looking at viewer', bust: '1.4::upper body::, looking at viewer', full: '1.2::full body::, standing, looking at viewer' };
+    const CUT = shot === 'full' ? /^(upper body|portrait|close-up|cowboy shot|bust)$/i
+        : /^(full body|standing|feet|barefoot|wide shot|very wide shot)$|\b(shoes|boots|loafers|sneakers|heels|sandals|slippers|socks|kneehighs|thighhighs|pantyhose|legwear|footwear|leggings)\b/i;
+    const cut = t => M.tokenize(t || '').filter(x => !CUT.test(x.text.trim())).map(x => x.raw || (Math.abs(x.weight - 1) < 0.001 ? x.text : `${M.fmtWeight(x.weight)}::${x.text}::`)).join(', ');
+    const builtIn = /^(?:sfw|nsfw)_(?:head|bust|full)$/.test(tpl.id);
+    const pos = builtIn
+        ? M.mergeTags(cut(fixed), tpl.nsfw ? 'nsfw, adult' : '', cut(job.charTags), 'solo', SHOT[shot] || SHOT.bust, 'simple background, white background')
+        : M.mergeTags(fixed, job.charTags, tpl.positive);
+    const neg = [neg0, job.charNeg, 'text, watermark, signature, multiple views', builtIn ? '' : tpl.negative].filter(Boolean).join(', ');
+    const { positive, negative } = composeStudio({ pos, neg });
+    const W = builtIn ? ({ head: [1024, 1024], bust: [896, 1152], full: [768, 1344] }[shot] || [896, 1152]) : [Number(tpl.width) || undefined, Number(tpl.height) || undefined];
+    const o = d.options;
+    const seed = o.sampleSameSeed === false ? undefined : (Number(o.sampleSeed) > 0 ? Number(o.sampleSeed) : (o.sampleSeed = Math.floor(Math.random() * 4294967294) + 1));
+    const director = job.charRef ? await charRefs([job.charRef]) : null;
+    return { image: await run({ noVibe: true, positive, negative, width: W[0], height: W[1], seed, director }), saved: false };
+}
+
 function createBatch(jobs, { onUpdate } = {}) {
     const state = {
         jobs: jobs.map(j => ({ soloWeight: getData().options.sampleSoloWeight, ...j, status: 'wait', error: '', image: '' })),
@@ -4822,7 +4889,8 @@ function createBatch(jobs, { onUpdate } = {}) {
             if (job.status === 'done' || job.status === 'skip') continue;
             job.status = 'run'; tick();
             try {
-                job.image = await makeSampleFor(job.ref, job.templateId, { soloWeight: job.soloWeight ?? 1 });
+                const r = await makeBatchImage(job);
+                job.image = r.image; job.saved = r.saved;
                 job.status = 'done';
             } catch (e) {
                 job.status = 'error'; job.error = e.message || String(e);
@@ -5504,7 +5572,17 @@ async function sceneFromChat(chatText, cast, { maxChars = 3 } = {}) {
 只输出 JSON：
 {"scene": "场景、背景、时间、光线、构图的英文标签，逗号隔开",
  "characters": [{"name": "登记的角色名", "tags": "这个角色此刻的动作表情姿势${cast.some(c => c.story) ? '和衣服' : ''}，英文标签", "x": 0.1到0.9, "y": 0.1到0.9}]}
-规则：只用常见 Danbooru 英文标签；不写画师，不写质量词，不写长相；x、y 是角色在画面里的大概位置。`;
+【NovelAI V5 画面表达】
+用常见英文标签锁定人物动作、物件和机位，用一到两句简短英文说明标签无法说清的空间关系、动作对象和遮挡。自然语言是画面说明，不冒充已验证的 Danbooru 标签。优先表达这一瞬间的核心动作和人物反应，删掉重复、互斥或与画面无关的词。
+场景段负责地点、机位、光线和人物之间的关系。每个人自己的动作、视线、持物、服装放在自己的角色段。固定发型、发色、眼睛、年龄感和体型由角色库提供，不为增加细节而重新设计，也不因为忧郁、疲倦就擅自添加伤疤、胡茬、脏污或衰老特征。
+多人关系用明确对象写清谁对谁做什么，例如 The man on the left offers a cup to the seated woman. 每个人只补自己的动作。source#、target#、mutual# 可辅助绑定同一个互动，仍需明确对象。不要让每个人都复制同一套动作。
+每人的视线要有实际目标，looking at another 需对应画面中的对象，交谈并不强制双方始终对视。看手机、看窗外、看对方、闭眼按正文分别处理。只有正文明确面对观看者、自拍或合影时才用 looking at viewer。
+检查动作发生阶段和受力。伸手去拿与已经握住选一刻，坐姿有承重座面，倚靠有支撑物，每只可见的手只承担相容的动作。不要让双方隔着桌子却贴身拥抱，不要补写裁切外的手指或背面看不见的眼睛。
+按关键动作选一种景别和一种主机位。双人递物要留出双方的手与道具，情绪重点可用近景，交代环境才用远景。同一张不堆 close-up、full body、wide shot；侧脸、三分之四和背面也只选符合正文的一种，不为好看而把人物强行转向镜头。
+背景保留正文中的地点与少量关键大物件，形成明确前后关系。光线说明来源、方向及照到的物体，例如窗光落在脸侧、壁炉光映在衣褶。需要细节时写可见的头发层次、布料褶皱、玻璃反光等具体内容，不机械堆 detailed、8k 或添加 film grain、noise、sketch 等画风词。
+保留当前画师串与用户风格。不要自行生成 artist:、质量词、负面词、采样参数、A1111 权重或整串高权重。high complexity、ultra complexity、depthness、fur dataset、background dataset 都不是通用画质前缀，不自动添加。实际画师、质量和负面由插件配置合并。
+位置描述应与角色顺序及坐标相容，近景被遮挡的人不能同时写成无遮挡全身。输出前检查人数、外貌归属、动作对象、视线、手与道具、景别、光源是否一致。只输出最终画面，不输出推理过程。
+scene 可包含英文场景关系句，characters[].tags 可包含该人物的简短动作说明。保持上述 JSON 字段，x、y 是人物的大概位置。`;
     const j = pickJson(await askLLM(sys, chatText.slice(-6000), { maxTokens: 900, fn: 'scene' }));
     return {
         scene: String(j.scene || '').trim(),
@@ -5677,6 +5755,8 @@ async function imageToPrompt(imageDataUrl) {
    - 全身姿势：standing、sitting、kneeling、squatting、lying on back、lying on side、on stomach、all fours、leaning forward、leaning back、bent over、arched back、crossed legs、spread legs、walking、running、jumping。
    - 身体朝向：facing viewer、facing away、turning around、looking back、profile。
    - 手和手臂：每只手在做什么（hand on own chest、hand on hip、hands up、arms behind back、arm support、reaching towards viewer、holding xx、covering mouth、v sign、hand in hair）。
+   - 手势要认出来、写准（先放大看手指：哪根伸直、哪根弯、有没有交叉、两只手是不是合在一起），认出来就写专门的标签，不要只写 hand near face / hand on own cheek：finger heart（拇指和食指交叉的单手比心）、heart hands（双手合成心形）、heart hands duo（两个人一起比）、v sign / double v / v over eye、ok sign、thumbs up、pointing at viewer / pointing up、index finger raised、finger to mouth / shushing、finger gun、claw pose、paw pose、fox shadow puppet、\\m/（horns）、waving、salute、fist、open hand、reaching towards viewer。手势放在哪也写上，比如 finger heart + hand on own cheek。自拍：拿手机的那只手通常伸向镜头、伸出画面外，写 selfie、outstretched arm、arm out of frame（看不到手机就不写 holding phone），不要把这只手写成 arm up / hand up；另一只手照常单独写它在做什么、比什么手势。
+   - 画面外的人也要找：图边上伸进来的手、手臂、腿（常见是镜头前的人 / 看图的人，也就是 POV），哪怕只露一只手也算一个人。写 pov、pov hands（镜头前的人的手）或 disembodied hand / out of frame，再写清他和画里的人怎么互动、谁抓着谁：holding another's wrist、holding another's hand、hand on another's face / cheek / chin、hand on another's head（摸头）、pulling another's tie、kissing hand、kissing another's fingers、finger to another's mouth、finger in another's mouth、licking another's fingers、biting another's finger、hand on another's chest、grabbing another's collar、reaching towards viewer、holding hands with viewer。分清是「自己的手」（hand on own chin）还是「别人的手」（another's hand on face），手臂从哪边伸进来（from below / from left / from right）也写上。人数照算，比如 1boy, pov。
    - 腿和脚：knees up、legs together、one knee up、feet up、standing on one leg。
    - 头：head tilt、chin rest、looking down、looking up。
    - 多人时写互动和相对位置：hug、hug from behind、holding hands、carrying、lap pillow、face-to-face、back-to-back、on top、between legs，谁在谁的哪边。
@@ -5712,16 +5792,143 @@ async function imageToPrompt(imageDataUrl) {
     return { positive: tags, negative: '', zh: String(j.zh || '').trim(), camera: arr(j.camera).join(', ') };
 }
 
+// 0.8.59：手势放大再认。手在整张图里只占一小块，识图模型经常把比心看成 hand near face。
+// 第一遍让 AI 给出每只手的位置框，这里把手裁出来放大拼成一张图，再单独问一次。
+const GESTURE_ZH = {
+    'finger heart': '单手比心', 'heart hands': '双手比心', 'v sign': '比耶', 'double v': '双手比耶', 'v over eye': '眼前比耶',
+    'ok sign': 'OK 手势', 'thumbs up': '竖大拇指', 'index finger raised': '竖食指', 'pointing': '指着', 'pointing at viewer': '指镜头',
+    'shushing': '嘘', 'finger to mouth': '手指抵嘴', 'finger gun': '手枪手势', 'claw pose': '爪子手势', 'paw pose': '猫爪手势',
+    'fox shadow puppet': '狐狸手势', 'waving': '挥手', 'salute': '敬礼', 'fist': '握拳', 'open hand': '张开手',
+};
+const handOut = h => /^(out|画面外|在画面外)(?:$|\s|[（(])/i.test(String(h?.visible || '').trim());
+function handBox(h, W, H) {
+    if (!Array.isArray(h?.box) || h.box.length !== 4) return null;
+    let [x1, y1, x2, y2] = h.box.map(Number);
+    if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+    // 有的模型给 0–1000 或像素坐标
+    const big = Math.max(x1, y1, x2, y2);
+    if (big > 1.5) { const sx = big > 1000 ? W : 1000, sy = big > 1000 ? H : 1000; x1 /= sx; x2 /= sx; y1 /= sy; y2 /= sy; }
+    if (x2 < x1) [x1, x2] = [x2, x1];
+    if (y2 < y1) [y1, y2] = [y2, y1];
+    [x1, y1, x2, y2] = [x1, y1, x2, y2].map(v => Math.max(0, Math.min(1, v)));
+    if (x2 - x1 < 0.01 || y2 - y1 < 0.01) return null;
+    // 往外放 40%，裁成正方形，免得手指被切掉
+    const cx = (x1 + x2) / 2 * W, cy = (y1 + y2) / 2 * H;
+    const side = Math.min(Math.max(W, H), Math.max((x2 - x1) * W, (y2 - y1) * H) * 1.8);
+    const sx = Math.max(0, Math.min(W - side, cx - side / 2)), sy = Math.max(0, Math.min(H - side, cy - side / 2));
+    return [sx, sy, Math.min(side, W), Math.min(side, H)];
+}
+async function zoomHands(imageDataUrl, hands) {
+    if (!hands.some(h => !handOut(h) && Array.isArray(h.box) && h.box.length === 4)) return [];
+    const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = imageDataUrl; });
+    const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+    const tiles = hands.map((h, i) => ({ i, r: handOut(h) ? null : handBox(h, W, H) })).filter(t => t.r).slice(0, 4);
+    if (!tiles.length) return [];
+    const S = 512, GAP = 12, TOP = 44;
+    const c = DOC.createElement('canvas');
+    c.width = tiles.length * S + (tiles.length - 1) * GAP; c.height = S + TOP;
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = '#e00'; g.font = 'bold 36px sans-serif'; g.textBaseline = 'top';
+    tiles.forEach((t, k) => { const x = k * (S + GAP); g.drawImage(img, ...t.r, x, TOP, S, S); g.fillText(String(k + 1), x + 8, 4); });
+    const sys = `你只看手。这张图是从一张照片里裁下来、放大的 ${tiles.length} 只手，从左到右，上面标了红色编号。逐只判断手势。
+先逐根手指看：拇指、食指、中指、无名指、小指，各是伸直、弯曲还是握起；拇指和食指的指尖有没有交叉、有没有捏在一起。再定手势：
+- finger heart（单手比心）：拇指和食指指尖交叉或捏在一起，形成一个小心形，中指、无名指、小指弯起或握起。从侧面看，常常只看到拇指压在弯起的食指上，也算 finger heart；它和随手托脸的区别就是拇指和食指是不是交叉 / 捏着。
+- v sign：食指和中指伸直分开，其余握起。
+- ok sign：拇指和食指圈成圆，其余三指伸直。
+- index finger raised、pointing、finger to mouth、finger gun、thumbs up、fist、open hand、claw pose、paw pose、waving 等。
+- 两只手合成一个心形是 heart hands。
+看不清或没有特别手势写 none，不要编。
+只输出 JSON：{"hands": [{"n": 1, "fingers": "逐根手指的中文描述", "gesture": "英文 Danbooru 标签或 none"}]}`;
+    const j = pickJson(await askVision(sys, '逐只认这些手的手势，先看手指再下结论。', c.toDataURL('image/jpeg', 0.92), { maxTokens: 1200, fn: 'pose' }));
+    const out = [];
+    for (const r of Array.isArray(j?.hands) ? j.hands : []) {
+        const t = tiles[Number(r?.n) - 1];
+        const gest = String(r?.gesture || '').trim().toLowerCase().replace(/_/g, ' ');
+        if (t && gest && !hasChinese(gest)) out[t.i] = { gesture: gest, fingers: String(r?.fingers || '').trim() };
+    }
+    return out;
+}
+/** 把每只手的结论变成标签：放大认出的手势优先；自拍拿手机那只手在画面外 */
+async function handTags(imageDataUrl, j, look, pose, composition) {
+    const hands = (Array.isArray(j?.hands) ? j.hands : []).filter(h => h && typeof h === 'object');
+    let zoomed = [];
+    try { zoomed = await zoomHands(imageDataUrl, hands); } catch (e) { if (e?.name === 'AbortError') throw e; console.warn('[智库] 放大认手势没成功，用第一遍的结果', e); }
+    const tags = new Map();
+    const add = (en, zh = '') => { en = String(en || '').trim().toLowerCase().replace(/_/g, ' '); if (en && en !== 'none' && !hasChinese(en) && !tags.has(en)) tags.set(en, { en, zh: zh || GESTURE_ZH[en] || '' }); };
+    hands.forEach((h, i) => add(zoomed[i] ? zoomed[i].gesture : h.gesture));
+    // 中文里已经说了比心，标签却漏了（只在没放大成功时兜底）
+    if (!zoomed.some(Boolean)) {
+        const notes = [look, ...hands.map(h => h.fingers || '')].join(' ');
+        if (/双手(?:合成心形|比心)|两只手合成[一个]*心形/.test(notes)) add('heart hands');
+        else if (/单手比心|拇指和食指(?:指尖)?(?:交叉|捏)/.test(notes)) add('finger heart');
+    }
+    // 二次识别纠正了某只手时，移除第一遍遗留的同一手势；其他手仍采用的标签保留。
+    const replaced = new Set();
+    hands.forEach((h, i) => {
+        const old = String(h.gesture || '').trim().toLowerCase().replace(/_/g, ' ');
+        if (zoomed[i] && old && old !== 'none' && old !== zoomed[i].gesture && !tags.has(old)) replaced.add(old);
+    });
+    const selfie = [...pose, ...composition].some(p => /\bselfie\b/i.test(p.en)) || /自拍/.test(look);
+    if (selfie && hands.some(handOut)) { add('outstretched arm', '自拍那只手伸向镜头'); add('arm out of frame', '那只手在画面外'); }
+    const zoomNotes = zoomed.map((z, i) => z && z.fingers ? `第 ${i + 1} 只手放大看：${z.fingers}（${z.gesture}）` : '').filter(Boolean).join('\n');
+    return { tags: [...tags.values()], hands, zoomNotes, replaced };
+}
+
+// 0.8.59：构图复核。第一遍要写的东西太多，模型注意力被摊薄，常把「画面外的人捏着他下巴」读成「自己托腮」。
+// 第二遍只问一件事：这张图的「梗」是什么、每只手是谁的，再把第一遍读错的标签纠正掉。
+async function reviewMeta(imageDataUrl, first) {
+    const list = (k, arr) => `${k}：${arr.map(p => p.en).join(', ') || '（空）'}`;
+    const sys = `你是构图复核员。另一个标注员已经看过这张图，写了一版标签，但他经常漏掉图里最特别的「梗」，把它当成普通人像。你只做复核，按下面的顺序一条条认真检查，看不到就算了，不要编：
+1. 每只手、每条手臂顺着往回找，连到谁的肩膀？
+   - 连到画里人自己的肩膀 → 是他自己的手。
+   - 从画面边缘（下边、左右边、上边）伸进来，连不到画里任何人的肩膀，或者袖子、肤色、粗细和画里的人对不上 → 是画面外的人的手（多半是镜头前的人 / 看图的人）。这时候写 pov、pov hands，再写清这只手在干什么：hand on another's chin（捏 / 托着他下巴）、hand on another's face / cheek、hand on another's mouth / covering another's mouth、holding another's wrist、grabbing another's collar、hand on another's head、finger to another's mouth 等。
+   - 第一遍如果把别人的手写成了他自己的（chin rest、head on hand、hand on own chin、hand on own cheek 这类），放进 remove。
+2. 镜头前有没有人在拍、在看、拿着东西：画面里出现手机 / 相机的取景框、拍照按钮、HDR、焦距这些界面 → pov、holding phone、taking picture、viewfinder、phone screen、camera ui、frame within a frame。画里的人其实在屏幕里面。
+3. 大小比例对不对：有没有巨大的手 / 人 / 东西和很小的人放在一起 → size difference、giant、minigirl、mini person、tiny、in palm、hand over another；人被书、手、盒子压着或夹着 → under book、between pages、trapped、pinned down、squished。
+4. 机位和方向反不反常：倒过来、斜很多、从正上方很远的地方往下看 → upside-down、rotated、dutch angle、bird's-eye view、from above。
+5. 画面处理：故障、色差、扫描线、胶片、画上的字 → glitch、chromatic aberration、scanlines、film grain、vertical text。
+最后用一句中文写 idea：这张图真正的梗是什么（比如「镜头前的人从下面伸手捏着他的下巴，他用手指抵着嘴笑」）。
+${PAIRS}
+只输出 JSON：{"hands": "每只手是谁的、从哪伸进来（中文）", "idea": "一句话", "add": [...要补的标签], "remove": ["第一遍写错的英文标签"]}`;
+    const user = `第一遍的结果：
+画面描述：${first.look || '（无）'}
+${list('人数', first.people)}
+${list('特殊构图', first.concept)}
+${list('姿势', first.pose)}
+${list('构图', first.composition)}
+请复核这张图。`;
+    const j = pickJson(await askVision(sys, user, imageDataUrl, { maxTokens: 1500, fn: 'pose' }));
+    return {
+        hands: String(j?.hands || '').trim(),
+        idea: String(j?.idea || '').trim(),
+        add: normPairs(j?.add),
+        remove: new Set((Array.isArray(j?.remove) ? j.remove : []).map(x => String(typeof x === 'object' ? x?.en || '' : x).replace(/_/g, ' ').trim().toLowerCase()).filter(Boolean)),
+    };
+}
+
 /** 看图只读姿势和构图（带中文） */
 async function imagePose(imageDataUrl) {
     const sys = `你是给 NovelAI / Danbooru 反推提示词的标注员。目标：用你写的标签重新生成，能得到「人摆放位置、姿势、镜头、构图、背景布局」和原图几乎一样的画面。宁可多写不要少写，每个看得到的细节都写成标签。
-先在 look 里用中文把画面从上到下、从左到右仔细描述一遍（人在画面哪个位置、身体每一部分怎么摆、镜头从哪拍、背景有什么、东西放在哪），再照着描述写标签。
+先在 look 里用中文说这张图特别在哪（创意、梗、和普通构图不一样的地方），再把画面从上到下、从左到右仔细描述一遍（人在画面哪个位置、身体每一部分怎么摆、镜头从哪拍、背景有什么、东西放在哪），再照着描述写标签。
+concept（特殊构图，最重要，先想清楚再写）：先问自己「这张图和普通的人物站着 / 坐着有什么不一样，换成普通构图哪里就没了」，把这个点写进 idea（一句中文），再把它拆成标签放进 concept。没有特别的就写 []，不要硬凑。常见的几类（只是例子，图里是别的就照实写）：
+- 大小反差：巨大的手 / 人和很小的人放在一起（size difference、giant、giant male / giantess、minigirl、mini person、tiny、in palm、hand over another、looking up at another），再写谁大谁小、大的那个是不是只露手（disembodied hand、hands、out of frame）。
+- 镜头前的人在拍 / 在看：画面里是手机或相机的取景框，镜头前的人拿着手机拍画里的人（pov、pov hands、holding phone、taking picture、viewfinder、phone screen、camera ui、frame within a frame、through screen、recording）。画里的人是在屏幕里面，要写出来。
+- 镜头前的人和画里的人互动：从画外伸进来的手捏下巴、捂嘴、抓手腕、按着东西（pov、pov hands、hand on another's chin / face / mouth、holding another's wrist、grabbing、reaching towards viewer）。
+- 被东西压着 / 夹着 / 关着：人被书、手、门、盒子压住或夹在中间（under book、between pages、trapped、pinned down、squished、in container、in box、in jar），东西比人大很多也算大小反差。
+- 透过东西看、画中画：镜子、窗、门缝、屏幕、照片里的画面（reflection、mirror、through window、peeking、door gap、photo (object)、frame within a frame）。
+- 特别的机位和画面处理：倒过来、斜着、鱼眼、俯拍很远很小（upside-down、rotated、dutch angle、fisheye、from above、bird's-eye view、extreme perspective、foreshortening），故障、色差、扫描线、胶片、模糊（glitch、chromatic aberration、scanlines、vhs artifacts、film grain、motion blur），画上的字（vertical text、speech text、background text）。
+- 前景挡着：前景有手、物件、玻璃挡住一部分（foreground、blurry foreground、partially obscured、glass）。
+concept 里的标签不用在 pose / composition 里再写一遍。
+hands（先写这个再写 pose）：画里每个人的每只手各写一条，画面外伸进来的手、自拍拿手机那只看不到的手也写。每条是 {"who": "谁的手", "side": "画面左边 / 画面右边", "visible": "in（完整在画面里）/ part（露一部分）/ out（在画面外）", "where": "手在哪、在干什么（中文）", "fingers": "逐根手指写：拇指、食指、中指、无名指、小指各是伸直 / 弯曲 / 握起，拇指和食指有没有交叉或捏在一起", "gesture": "认出来的手势英文标签，没有写 none", "box": [x1, y1, x2, y2]（这只手在图里的范围，0 到 1，左上角是 0,0；out 的写 null）}。
 people：人数和性别（1girl、1boy、2girls、1boy 1girl、no humans 等），看不清就按体型判断，不能空。
 pose（姿势，至少 12 个，越细越好）：
 - 全身：standing、sitting、sitting on xx、kneeling、seiza、squatting、lying on back / side / stomach、all fours、leaning forward / back / against xx、bent over、arched back、curled up、walking、running、jumping。
 - 朝向：facing viewer、facing away、facing to the side、turning around、looking back、profile、three-quarter view。
 - 头和视线：head tilt、head down、chin rest、head on hand、looking at viewer / away / down / up / to the side / at another、eyes closed、half-closed eyes。
 - 左右手分别写：hand on own cheek / chest / hip / knee、hand up、hands together、arms behind back、arms crossed、arm support、reaching、holding xx（写清拿着什么）、hand in pocket、hand in hair、v sign、pointing、covering mouth、hugging own legs。
+- 手势要认出来、写准（先放大看手指：哪根伸直、哪根弯、有没有交叉、两只手是不是合在一起），认出来就写专门的标签，不要只写 hand near face / hand on own cheek：finger heart（拇指和食指交叉的单手比心）、heart hands（双手合成心形）、heart hands duo（两个人一起比）、v sign / double v / v over eye、ok sign、thumbs up、pointing at viewer / pointing up、index finger raised、finger to mouth / shushing、finger gun、claw pose、paw pose、fox shadow puppet、\\m/（horns）、waving、salute、fist、open hand、reaching towards viewer。手势放在哪也写上，比如 finger heart + hand on own cheek。自拍：拿手机的那只手通常伸向镜头、伸出画面外，写 selfie、outstretched arm、arm out of frame（看不到手机就不写 holding phone），不要把这只手写成 arm up / hand up；另一只手照常单独写它在做什么、比什么手势。
+- 画面外的人也要找：图边上伸进来的手、手臂、腿（常见是镜头前的人 / 看图的人，也就是 POV），哪怕只露一只手也算一个人。写 pov、pov hands（镜头前的人的手）或 disembodied hand / out of frame，再写清他和画里的人怎么互动、谁抓着谁：holding another's wrist、holding another's hand、hand on another's face / cheek / chin、hand on another's head（摸头）、pulling another's tie、kissing hand、kissing another's fingers、finger to another's mouth、finger in another's mouth、licking another's fingers、biting another's finger、hand on another's chest、grabbing another's collar、reaching towards viewer、holding hands with viewer。分清是「自己的手」（hand on own chin）还是「别人的手」（another's hand on face），手臂从哪边伸进来（from below / from left / from right）也写上。人数照算，比如 1boy, pov。
 - 腿和脚：knees up、knees together、legs apart、crossed legs、one knee up、legs folded、legs to the side、feet together、feet up、barefoot、foot out of frame。
 - 多人：谁在谁的哪边（on left、on right、in front、behind）、hug、hug from behind、holding hands、lap pillow、carrying、face-to-face、back-to-back、leaning on another、eye contact 等。
 - 表情写一两个。
@@ -5741,18 +5948,36 @@ NSFW 图（有裸露或性行为）额外写细，全部放进 nsfw：
 - 镜头焦点：pussy focus、ass focus、penis focus、close-up on genitals 这类写进构图或 nsfw。
 看起来是未成年或年龄不明的人，不写任何 NSFW 标签。只写图里看得到的。
 ${PAIRS}
-只输出 JSON：{"look": "中文的详细描述", "people": [...], "pose": [...], "composition": [...], "props": [...], "background": [...], "nsfw": [...]}`;
+只输出 JSON：{"look": "中文的详细描述", "idea": "这张图特别在哪，一句话", "concept": [...], "hands": [...], "people": [...], "pose": [...], "composition": [...], "props": [...], "background": [...], "nsfw": [...]}`;
     const j = pickJson(await askVision(sys, '反推这张图：姿势、构图、物件、背景都写细，要能照着重画出几乎一样的画面。', imageDataUrl, { maxTokens: 4000, fn: 'pose' }));
     const NSFW_RE = /\b(nsfw|sex|penis|vagina|pussy|nipples?|areolae|clitoris|testicles|anus|cum|creampie|ejaculation|saliva|spread legs|presenting|masturbation|fellatio|cunnilingus|irrumatio|paizuri|handjob|footjob|fingering|orgasm|ahegao|nude|naked|bdsm|bondage|groping|panties aside|after sex|rape|missionary|cowgirl position|doggystyle|prone bone|mating press|pussy juice|x-ray|cross-section)\b/i;
     let pose = normPairs(j.pose), composition = normPairs(j.composition), nsfw = normPairs(j.nsfw);
-    const people = normPairs(j.people), props = normPairs(j.props), background = normPairs(j.background), look = String(j.look || '').trim();
+    const people = normPairs(j.people), props = normPairs(j.props), background = normPairs(j.background);
+    const ht = await handTags(imageDataUrl, j, String(j.look || '').trim(), pose, composition);
+    const look = [String(j.look || '').trim(), ht.zoomNotes].filter(Boolean).join('\n');
+    // 手势放最前面，权重高；和 AI 原来写的重复的去掉
+    { const key = p => p.en.replace(/_/g, ' ').trim().toLowerCase(); const seen = new Set(ht.tags.map(key)); pose = [...ht.tags, ...pose.filter(p => !seen.has(key(p)) && !ht.replaced.has(key(p)))]; composition = composition.filter(p => !ht.replaced.has(key(p))); }
     // AI 偶尔还是放错栏：明显的挪到 NSFW
     const restricted = p => NSFW_RE.test(p.en.replace(/_/g, ' '));
-    const moved = [...pose, ...composition].filter(restricted);
+    const moved = [...pose, ...composition, ...normPairs(j.concept)].filter(restricted);
     pose = pose.filter(p => !restricted(p)); composition = composition.filter(p => !restricted(p));
     nsfw = [...new Map([...nsfw, ...moved].map(p => [p.en.replace(/_/g, ' ').trim().toLowerCase(), p])).values()];
-    if (!pose.length && !composition.length && !nsfw.length) throw new Error('AI 没读出姿势和构图，换个能识图的模型试试');
-    return { people, pose, composition, props, background, nsfw, look };
+    if (!pose.length && !composition.length && !nsfw.length && !normPairs(j.concept).length) throw new Error('AI 没读出姿势和构图，换个能识图的模型试试');
+    let idea = String(j.idea || '').trim();
+    let concept = normPairs(j.concept).filter(p => !restricted(p) && !ht.replaced.has(p.en.replace(/_/g, ' ').trim().toLowerCase()));
+    { const key = p => p.en.replace(/_/g, ' ').trim().toLowerCase(); const seen = new Set(concept.map(key)); concept = [...new Map(concept.map(p => [key(p), p])).values()]; pose = pose.filter(p => !seen.has(key(p))); composition = composition.filter(p => !seen.has(key(p))); }
+    let lookOut = look;
+    try {
+        const rv = await reviewMeta(imageDataUrl, { look, people, concept, pose, composition });
+        const key = p => p.en.replace(/_/g, ' ').trim().toLowerCase();
+        const drop = p => rv.remove.has(key(p));
+        pose = pose.filter(p => !drop(p)); composition = composition.filter(p => !drop(p)); concept = concept.filter(p => !drop(p));
+        const have = new Set([...concept, ...pose, ...composition].map(key));
+        concept = [...rv.add.filter(p => { const k = key(p); if (restricted(p) || have.has(k) || rv.remove.has(k)) return false; have.add(k); return true; }), ...concept];
+        if (rv.idea) idea = rv.idea;
+        if (rv.hands) lookOut = [look, '复核：' + rv.hands].filter(Boolean).join('\n');
+    } catch (e) { if (e?.name === 'AbortError') throw e; console.warn('[智库] 构图复核没成功，用第一遍的结果', e); }
+    return { people, concept, idea, pose, composition, props, background, nsfw, look: lookOut };
 }
 return { AI_FNS, stopFetch, extractCastFromChat, identifyCanon, apiFor, aiSeen, aiCfg, splitFormat, stToEntries, tavernPresets, entriesFor, currentTavernPreset, imagePose, imageToPrompt, zhForTags, extractCast, hasChinese, apiProfiles, activeApiId, currentApi, askLLM, translateToTags, pickJson, extractAppearance, textToPairs, sceneFromChat, listModels, designOutfit, outfitFromStory, designOutfitsFromChat, askVision, outfitFromImage, lookFromImage, outfitFromText };
 })();
@@ -5782,13 +6007,15 @@ function avatarUrl(c) {
 }
 
 /** 酒馆里所有角色卡 */
-function stCards() {
-    return (ctx().characters || []).filter(c => c?.avatar).map(c => ({ key: 'char:' + c.avatar, kind: 'char', name: c.name, avatar: c.avatar, desc: [c.description, c.data?.description].find(Boolean) || '' }));
+function stCards({ all = false } = {}) {
+    const hid = getData().options?.hiddenChars || {};
+    return (ctx().characters || []).filter(c => c?.avatar && (all || !hid['char:' + c.avatar])).map(c => ({ key: 'char:' + c.avatar, kind: 'char', name: c.name, avatar: c.avatar, desc: [c.description, c.data?.description].find(Boolean) || '' }));
 }
 /** 酒馆里所有人设 */
-function stPersonas() {
+function stPersonas({ all = false } = {}) {
     const pu = ctx().powerUserSettings || {};
-    return Object.entries(pu.personas || {}).map(([id, name]) => ({ key: 'user:' + id, kind: 'user', name, avatar: id, desc: pu.persona_descriptions?.[id]?.description || '' }));
+    const hid = getData().options?.hiddenChars || {};
+    return Object.entries(pu.personas || {}).filter(([id]) => all || !hid['user:' + id]).map(([id, name]) => ({ key: 'user:' + id, kind: 'user', name, avatar: id, desc: pu.persona_descriptions?.[id]?.description || '' }));
 }
 function currentPersonaKey() {
     const c = ctx();
@@ -5808,20 +6035,21 @@ const blank = src => ({
 function getChar(key) {
     const d = getData();
     if (d.characters[key]) return d.characters[key];
-    const src = [...stCards(), ...stPersonas()].find(x => x.key === key);
+    const src = [...stCards({ all: true }), ...stPersonas({ all: true })].find(x => x.key === key);
     return src ? blank(src) : null;
 }
 function saveChar(c) {
     const d = getData();
     linkSameOutfits();
     d.characters[c.key] = c;
+    if (d.options.hiddenChars?.[c.key]) delete d.options.hiddenChars[c.key]; // 删掉后又写了：重新显示
     try { syncOutfitsFrom(c); } catch (e) { console.warn('[智库] 同步衣服', e); }
     commit({ silent: true });
 }
 /** 角色卡描述（给 AI 读外貌用） */
 function descOf(c) {
     if (c.kind === 'side') return '';
-    return [...stCards(), ...stPersonas()].find(x => x.key === c.key)?.desc || '';
+    return [...stCards({ all: true }), ...stPersonas({ all: true })].find(x => x.key === c.key)?.desc || '';
 }
 /** 读人设用：描述、性格、场景、卡里的世界书、绑定的世界书都拿来；配角只拿提到它名字的世界书条目 */
 async function descOfFull(c, { all = false } = {}) {
@@ -6256,6 +6484,10 @@ function outfitHolders(o) {
 }
 /** 衣柜按「同一套」分组：[{ o, owner, holders }] */
 function wardrobeGroups() {
+    // 以前读卡自动存的衣服都叫「默认」，一多分不清：改成「XX的衣服」
+    let renamed = false;
+    for (const c of Object.values(getData().characters)) for (const o of c.outfits || []) if (o.name === '默认') { o.name = `${c.name}的衣服`; o.auto = true; renamed = true; }
+    if (renamed) commit({ silent: true });
     linkSameOutfits();
     const groups = new Map(), out = [];
     for (const x of wardrobe()) {
@@ -6737,7 +6969,7 @@ async function pcRecordImage({ dataUrl, url, raw = '', sent = null, from }) {
     try { thumb = await pcLocal.put(await pcMakeThumb(dataUrl)); } catch (e) { console.warn('[智库] 缩略图没存上', e); }
     const d = __mod_store.getData();
     const cut = (v, n) => String(v || '').slice(0, n);
-    const entry = { id: 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), url: String(url), thumb, raw: String(raw ?? ''), prompt: String(sent?.prompt ?? ''), negative: String(sent?.negative ?? ''), chars: (sent?.chars || []).map(c => String(typeof c === 'string' ? c : c?.prompt ?? '')).filter(Boolean), seed: sent?.seed ?? '', size: cut(sent?.size, 20), model: cut(sent?.model, 40), from, at: Date.now() };
+    const entry = { id: 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), url: String(url), thumb, raw: String(raw ?? ''), prompt: String(sent?.prompt ?? ''), negative: String(sent?.negative ?? ''), chars: (sent?.chars || []).map(c => String(typeof c === 'string' ? c : c?.prompt ?? '')).filter(Boolean), seed: sent?.seed ?? '', size: cut(sent?.size, 20), model: cut(sent?.model, 40), ...(sent?.params ? { params: { ...sent.params } } : {}), from, at: Date.now() };
     d.history = [entry, ...(Array.isArray(d.history) ? d.history : []).filter(h => h.url !== entry.url)].slice(0, 300);
     __mod_store.commit({ silent: !DOC.querySelector('#pc-root.open') });
 }
@@ -6748,8 +6980,19 @@ const __mod_marker=createMarkerController({
             // 外貌、负面词和参考图都来自这一张图的角色标记
             const hit=__mod_chars.markerPrompt(prompt,where);
             const {positive,negative,chars}=hit||__mod_engine.composeStudio({pos:__mod_model.mergeTags(d.active?__mod_model.ticketString(d,d.active):'',prompt,d.options.chatPositive||''),neg:[d.active?__mod_model.ticketNeg(d,d.active):'',d.options.chatNegative||''].filter(Boolean).join(', ')});
+            // 正文画师串：没选就警告；选了但画师没进正面就报错，不画
+            const tkName=d.active?__mod_model.ticketName(d,d.active):'',tkStr=d.active?__mod_model.ticketString(d,d.active):'';
+            const artKey=t=>String(t.text||'').replace(/^artist\s*:\s*/i,'').replace(/[_\s]+/g,' ').trim().toLowerCase();
+            const artists=text=>__mod_model.tokenize(text).flatMap(t=>__mod_model.tokenize(t.text)).filter(t=>t.isArtist).map(artKey).filter(Boolean);
+            const want=[...new Set(artists(tkStr))];
+            const have=new Set(artists([positive,...(chars||[]).map(c=>c.prompt)].join(', ')));
+            const lost=want.filter(a=>!have.has(a));
+            if(!d.active){toastr.warning('正文没选画师串，这张按当前提示词生图。到智库顶上「正文画师串」选一个','智库 · 标记生图',{timeOut:5000});globalThis.__zkLog?.('生图警告','正文出图没选正文画师串',{来源:where?.src||'正文插图',正面:positive});}
+            else if(want.length&&lost.length===want.length){globalThis.__zkLog?.('生图失败',`正文画师串「${tkName}」的画师一个都没进提示词`,{画师串:tkStr,正面:positive});throw new Error(`正文画师串「${tkName}」没进提示词，这张没画。把问题记录发给作者`);}
+            else if(lost.length){toastr.warning(`正文画师串「${tkName}」里有 ${lost.length} 个画师没进提示词：${lost.join('、')}`,'智库 · 标记生图',{timeOut:6000});}
+            const srcNote=(where?.src||'正文插图')+(d.active?` · 画师串「${tkName}」${lost.length?`（缺 ${lost.length} 个画师）`:'（已带上）'}`:' · 没选画师串');
             const bound=[...new Set((hit?.cast||[]).map(ch=>ch.charRef).filter(id=>id&&d.charRefGroups?.[id]))];
-            const image=await __mod_engine.generateFull({src:where?.src,positive,negative,...(chars?.length?{chars}:{}),backend:(typeof __mod_nai!=='undefined'&&__mod_nai.chatBackend?.()||'nai'),director:__mod_nai.chatBackend?.()!=='comfy'&&bound.length?await __mod_engine.charRefs(bound):null});__mod_engine.afterChatImage();return image;},
+            const image=await __mod_engine.generateFull({src:srcNote,positive,negative,...(chars?.length?{chars}:{}),backend:(typeof __mod_nai!=='undefined'&&__mod_nai.chatBackend?.()||'nai'),director:__mod_nai.chatBackend?.()!=='comfy'&&bound.length?await __mod_engine.charRefs(bound):null});__mod_engine.afterChatImage();return image;},
         resolveUrl:u=>pcLocal.url(u),upload:async(image,name)=>{const r=await pcStoreImage(image,name);void pcRecordImage({dataUrl:image,url:r?.url,raw:pcMarkerRaw,sent:__mod_engine.runtime.lastSent,from:'chat'}).catch(e=>console.warn('[智库] 历史生图没存上',e));return r;},notify:(message,level)=>toastr[level]?.(message,'智库 · 标记生图')
     });
 const __mod_ui = (() => {
@@ -7208,13 +7451,27 @@ function applyScene(p) {
 const SCENE_NSFW = /\b(?:nsfw|nude|naked|nipples?|areolae?|penis|pussy|vagina|clitoris|sex|cum|ejaculation|masturbation|erection|anus|anal|fellatio|paizuri|handjob|cunnilingus|testicles|pubic hair|topless|bottomless|spread (?:ass|legs|pussy))\b/i;
 /** 没标过的旧条目：带明显 NSFW 词的先标上 NSFW */
 const sceneAutoTags = text => SCENE_NSFW.test(String(text || '')) ? ['NSFW'] : [];
+/** 让 AI 给一段固定提示词起个短名字；失败就抛错 */
+async function aiSceneName(p) {
+    const text = String(p.scene || '').trim().slice(0, 1500);
+    if (!text) throw new Error('固定提示词是空的');
+    const used = (ui.studio.scenes || []).map(x => x.name).filter(Boolean).slice(0, 40).join('、');
+    const sys = `你给一段 AI 画图用的提示词起个好记的名字，方便以后在列表里一眼认出来。
+只输出名字本身：中文，2 到 10 个字，抓住画面最特别的地方（场景、动作、构图、梗），比如「雨天窗边咖啡」「POV 捏下巴」「大手和小人」「被书压扁」「对镜自拍」。
+不要引号、书名号、句号，不要解释，不要写画质词、画师。${used ? '这些名字已经用过，别重复：' + used : ''}`;
+    const r = await T.askLLM(sys, text, { maxTokens: 80, fn: 'tr' });
+    const name = String(r || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim().split('\n').map(x => x.trim()).filter(Boolean).pop() || '';
+    const clean = name.replace(/^(?:名字[:：])?["'“”「」『』【】《》\s]*|["'“”「」『』【】《》。.!！\s]+$/g, '').slice(0, 16);
+    if (!clean) throw new Error('AI 没给出名字');
+    return clean;
+}
 function sceneRow(p, i, kind) {
     const cur = sceneSig(p) === sceneSig(sceneSnapshot());
     const title = kind === 'saved' ? p.name || '没起名' : new Date(p.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
     return `<div class="pc-promptrow ${cur ? 'cur' : ''}">
       <div class="pc-grow"><b>${esc(title)}${cur ? ' <em>在用</em>' : ''}</b>${kind === 'saved' && p.tags?.length ? `<span class="pc-scenetags">${p.tags.map(t => `<i>${esc(t)}</i>`).join('')}</span>` : ''}<small class="mono" ${kind === 'saved' ? `data-act="sceneedit" data-i="${i}" style="cursor:pointer" title="点一下修改"` : ''}>${esc(p.scene)}</small></div>
       <div class="pc-promptacts">${cur ? '' : `<button class="pc-pill tiny on" data-act="sceneuse" data-kind="${kind}" data-i="${i}">换上</button>`}
-        ${kind === 'recent' ? `<button class="pc-pill tiny dashed" data-act="scenekeep" data-i="${i}">存下</button>` : `<button class="pc-pill tiny dashed" data-act="sceneedit" data-i="${i}">修改</button>`}
+        ${kind === 'recent' ? `<button class="pc-pill tiny dashed" data-act="scenekeep" data-i="${i}">存下</button>` : `<button class="pc-pill tiny dashed" data-act="sceneedit" data-i="${i}">修改</button><button class="pc-pill tiny dashed" data-act="sceneainame" data-i="${i}">AI 起名</button>`}
         <button class="pc-x" data-act="scenedel" data-kind="${kind}" data-i="${i}" aria-label="删掉">×</button></div></div>`;
 }
 function sceneLibrary() {
@@ -7238,7 +7495,7 @@ function sceneLibrary() {
 .pc-i2i img{width:84px;max-height:120px;object-fit:cover;border-radius:12px;cursor:zoom-in}
 .pc-i2i input[type=range]{width:100%}
 </style>
-      <div class="pc-actions wrap" style="margin-top:8px"><button class="pc-pill dashed" data-act="scenesave">＋ 存下这段</button></div>
+      <div class="pc-actions wrap" style="margin-top:8px"><button class="pc-pill dashed" data-act="scenesave">＋ 存下这段（起个名字）</button><button class="pc-pill dashed" data-act="scenesave" data-ai="1">✦ AI 起名存下</button></div>
       ${saved.length ? (() => {
         const tagsOf = p => (p.tags ??= sceneAutoTags(p.scene));
         const all = [...new Set(saved.flatMap(tagsOf))];
@@ -7257,7 +7514,8 @@ function studioParts() { return { pos: ui.studio.pos, neg: ui.studio.neg, scene:
 /** 固定提示词（原来在页面下面，挪到正面、负面下面） */
 function sceneFold() {
     const st = ui.studio;
-    return fold('scene', '固定提示词', st.sceneOn === false ? '不发送' : !String(st.scene || '').trim() ? '跟着发送 · 还没写' : !sceneReady() ? '跟着发送 · 生成时转成标签' : `跟着发送 · ${M.tokenize(sceneTags()).length} 个词`, `
+    const named = String(st.scene || '').trim() ? (st.scenes || []).find(p => sceneSig(p) === sceneSig(sceneSnapshot()))?.name : '';
+    return fold('scene', named ? `固定提示词 · ${named}` : '固定提示词', st.sceneOn === false ? '不发送' : !String(st.scene || '').trim() ? '跟着发送 · 还没写' : !sceneReady() ? '跟着发送 · 生成时转成标签' : `跟着发送 · ${M.tokenize(sceneTags()).length} 个词`, `
       <label class="pc-switch"><input type="checkbox" data-scene-on ${st.sceneOn !== false ? 'checked' : ''}><span></span>每次生成都带上<small>接在正面提示词后面、质量词前面一起发。不改你的正面提示词，也不进画师串。</small></label>
       <textarea id="pc-scene" class="pc-textarea small" data-bind="studio.scene" placeholder="中文英文都行。比如：坐在窗边喝咖啡，外面下雨 / 1boy, sitting, window, rain">${esc(st.scene || '')}</textarea>
       ${sceneLibrary()}
@@ -7438,7 +7696,7 @@ function histDetail(x) {
         if (act === 'share') {
             if (!L.serverBase()) { toastr.warning('先到「设置」里填共享服务器地址', '共享'); return; }
             box.closeModal();
-            openSharedUpload({ artistString: x.prompt || x.raw || '', negative: x.negative || '', image: await pcLocal.url(x.url) });
+            openSharedUpload({ artistString: x.prompt || x.raw || '', negative: x.negative || '', image: await pcLocal.url(x.url), params: shareImageParams(x) });
         }
         if (act === 'delete') { if (!(await confirmBox('删掉这张图？图片也会删掉。', { ok: '删除', cancel: '算了' }))) return; histRemove([x]); box.closeModal(); render(); }
         if (act === 'reuse') {
@@ -7603,11 +7861,11 @@ function viewStudio(d) {
     return `
     ${!N.isReady() ? `<section class="pc-card pc-pad pc-warn-card"><b>还没填 NovelAI key</b><div class="pc-hint">填好才能生图。</div><button class="pc-btn dark pc-mt-s" data-act="nav" data-view="settings">去填</button></section>` : ''}
     <section class="pc-card pc-pad ${!N.isReady() ? 'pc-mt' : ''}">
-      <div class="pc-row-between"><h2 class="pc-h2" style="margin:0">生成图片</h2><span class="pc-dim small">${esc(modelName)}</span></div>
+      <div class="pc-row-between"><h2 class="pc-h2" style="margin:0">生成图片</h2>${s.naiMode === 'gpt' ? `<span class="pc-dim small">${esc(modelName)}</span>` : `<select data-st="novelaimode" title="换模型" style="width:auto;max-width:58%;padding:4px 8px;border-radius:999px;border:1.5px dashed var(--pc-dash);background:transparent;color:var(--pc-ink);font:inherit;font-size:13px">${N.MODELS.map(([v, t]) => `<option value="${v}" ${v === s.novelaimode ? 'selected' : ''}>${esc(t)}</option>`).join('')}${N.MODELS.some(m => m[0] === s.novelaimode) ? '' : `<option value="${esc(s.novelaimode)}" selected>${esc(modelName)}</option>`}</select>`}</div>
       <div class="pc-row-between" style="margin-top:10px"><span class="pc-label" style="margin:0">正面提示词</span><span class="pc-chips" style="margin:0;flex-wrap:wrap;justify-content:flex-end"><label class="pc-pill dashed tiny" style="cursor:pointer">${ui.img2pBusy ? '<span class="pc-busy">看图中</span>' : '看图写提示词'}<input type="file" accept="image/*" data-img2prompt hidden ${ui.img2pBusy ? 'disabled' : ''}></label><label class="pc-pill dashed tiny" style="cursor:pointer">${ui.poseBusy ? '<span class="pc-busy">读姿势中</span>' : '看图读姿势构图'}<input type="file" accept="image/*" data-imgpose hidden ${ui.poseBusy ? 'disabled' : ''}></label></span></div>
       <div class="pc-artline">
         ${(() => { const cv = owner && M.ticketCover(d, owner); return cv ? `<img class="pc-artcover" src="${esc(imgUrl(cv))}" alt="看例图" data-act="viewticket" data-type="${owner.type}" data-id="${esc(owner.id)}">` : seal(); })()}
-        <div class="pc-grow"><b>${owner ? esc(M.ticketName(d, owner)) : (st.pos.trim() ? '这串还没存进画师库' : '还没写')}</b><small>${[nArtists ? nArtists + ' 位画师' : '没有 artist: 画师', nOther ? nOther + ' 个别的词' : ''].filter(Boolean).join(' · ')}${owner && M.ticketCover(d, owner) ? ' · 点图看大图' : ''}</small></div>
+        <div class="pc-grow"><b ${owner?.type === 'group' ? 'data-act="studiorename" style="cursor:pointer" title="点一下改名"' : ''}>${owner ? esc(M.ticketName(d, owner)) : (st.pos.trim() ? '这串还没存进画师库' : '还没写')}${owner?.type === 'group' ? ' <span class="pc-dim" style="font-weight:400;font-size:12px">✎ 改名</span>' : ''}</b><small>${[nArtists ? nArtists + ' 位画师' : '没有 artist: 画师', nOther ? nOther + ' 个别的词' : ''].filter(Boolean).join(' · ')}${owner && M.ticketCover(d, owner) ? ' · 点图看大图' : ''}</small></div>
         <button class="pc-pill dashed" data-act="pickartist">换画师</button>
       </div>
       ${(() => { const bare = guessBareArtists(d, st.pos); return bare.length ? `<div class="pc-bare" style="margin-top:8px"><div class="pc-row-between"><span class="pc-dim small">没写 artist: 的画师名 · 点名字单个补</span><button class="pc-pill tiny on" data-act="addprefix">全部补上</button></div><div class="pc-chips wrap">${bare.map(n => `<button class="pc-pill dashed tiny" data-act="addprefix" data-name="${esc(n)}">${esc(n)}</button>`).join('')}</div></div>` : ''; })()}
@@ -8501,6 +8759,9 @@ function viewWardrobe(d) {
     const q = ui.wardSearch.trim().toLowerCase();
     const list = all.filter(x => (ui.wardFilter === 'all' || (ui.wardFilter === 'none' ? !x.owner : x.holders.some(h => h.owner?.key === ui.wardFilter)))
         && (!q || (x.o.name + ' ' + C.tagText(x.o.tags) + ' ' + x.o.tags.map(t => t.zh).join(' ')).toLowerCase().includes(q)));
+    // 读卡自动存的、没加图、没改名、只有本人穿的：收进下面一栏
+    const isAuto = x => x.o.auto && !x.o.image && x.holders.length <= 1 && x.owner && x.o.name === `${x.owner.name}的衣服`;
+    const mine = list.filter(x => !isAuto(x)), autos = list.filter(isAuto);
     return `${castTop()}
     <div class="pc-outmake">
       <label class="pc-btn dark">${IMG_ICON} 图片<input type="file" accept="image/*" multiple data-wardimg hidden></label>
@@ -8513,10 +8774,11 @@ function viewWardrobe(d) {
     <div class="pc-chips">${[['all', '全部'], ...owners.map(c => [c.key, c.name]), ['none', '没给谁穿']].map(([k, t]) => `<button class="pc-pill ${ui.wardFilter === k ? 'on' : 'dashed'}" data-act="wardfilter" data-v="${esc(k)}">${esc(t)}</button>`).join('')}</div>
     <div class="pc-row-between pc-mt-s"><span class="pc-dim small">卡片上的图</span><div class="pc-chips" style="margin:0">${[['head', '裁成一样高'], ['full', '展示整张']].map(([k, t]) => `<button class="pc-pill tiny ${(d.options.wardThumb || 'head') === k ? 'on' : 'dashed'}" data-act="wardthumb" data-v="${k}">${t}</button>`).join('')}</div></div>
     <style>.pc-wardgrid.thumb-head .pc-ticket-img img{object-fit:cover;object-position:50% 8%}.pc-wardgrid.thumb-full{align-items:start}.pc-wardgrid.thumb-full .pc-ticket-img{height:auto!important;-webkit-mask-image:none;mask-image:none}.pc-wardgrid.thumb-full .pc-ticket-img img{height:auto;object-fit:contain;display:block}</style>
-    <div class="pc-grid2 pc-mt-s pc-wardgrid thumb-${d.options.wardThumb === 'full' ? 'full' : 'head'}">${list.map(({ o, owner, holders }) => `<article class="pc-ticket" data-act="openoutfit" data-owner="${esc(owner?.key || '')}" data-id="${esc(o.id)}">
+    <div class="pc-grid2 pc-mt-s pc-wardgrid thumb-${d.options.wardThumb === 'full' ? 'full' : 'head'}">${mine.map(({ o, owner, holders }) => `<article class="pc-ticket" data-act="openoutfit" data-owner="${esc(owner?.key || '')}" data-id="${esc(o.id)}">
         <div class="pc-ticket-img">${o.image ? `<img src="${esc(o.image.startsWith('data:') ? o.image : '/' + o.image.replace(/^\/+/, ''))}" loading="lazy" alt="">` : '<span>还没有图</span>'}</div>
         <div class="pc-ticket-text"><b>${esc(o.name)}</b><small>${o.tags.length} 个标签</small><span class="pc-state ${owner ? '' : 'todo'}">${owner ? '穿在：' + esc(holders.map(h => h.owner.name).join('、')) : '还没给谁穿'}</span></div></article>`).join('')
-        || empty('衣柜是空的', '点上面「图片」放一张图，AI 会把衣服写成标签；也可以让 AI 设计，或者自己写。')}</div>
+        || (autos.length ? '' : empty('衣柜是空的', '点上面「图片」放一张图，AI 会把衣服写成标签；也可以让 AI 设计，或者自己写。'))}</div>
+    ${autos.length ? `<style>.pc-wardrow{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:10px 2px;border:0;border-top:1px dashed var(--pc-dash);background:transparent;color:inherit;font:inherit;font-size:14px;cursor:pointer;text-align:left}.pc-wardrow:first-of-type{border-top:0}.pc-wardrow em{font-style:normal;opacity:.6;font-size:12px;flex:none}</style><div class="pc-mt-s">${fold('wardauto', '角色卡里读出来的衣服', autos.length + ' 套', `<div class="pc-dim small" style="margin-bottom:4px">读角色时自动存的。加了图、改了名或给第二个人穿，就会挪到上面。</div>${autos.map(({ o, owner }) => `<button class="pc-wardrow" data-act="openoutfit" data-owner="${esc(owner.key)}" data-id="${esc(o.id)}"><span>${esc(o.name)}</span><em>${o.tags.length} 个标签</em></button>`).join('')}`)}</div>` : ''}
     <div style="height:24px"></div>`;
 }
 
@@ -8580,7 +8842,15 @@ function viewOutfit(d) {
       <b>${u.draft ? '存到哪里' : holders.length ? '谁在穿' : '给谁穿'}</b>
       ${holders.length ? `<div class="pc-chips wrap">${holders.map(h => `<button class="pc-pill on" data-act="outtakeoff" data-v="${esc(h.key)}" title="从${esc(h.name)}身上拿掉">${esc(h.name)} ×</button>`).join('')}</div><div class="pc-dim small">点名字 × 从他身上拿掉（衣柜里还在）。下面点名字再给别人穿，几个人穿的是同一套，改了一起变。</div>${label('再给谁穿')}` : ''}
       <div class="pc-chips wrap">${u.draft ? `<button class="pc-pill ${!u.dest ? 'on' : 'dashed'}" data-act="outdest" data-v="">只存进衣柜</button>` : ''}
-        ${people.filter(c => c.key !== owner?.key && !holders.some(h => h.key === c.key)).map(c => `<button class="pc-pill ${u.dest === c.key ? 'on' : 'dashed'}" data-act="${u.draft ? 'outdest' : 'outgive'}" data-v="${esc(c.key)}">${u.draft ? '给' : ''}${esc(c.name)}${u.draft ? '穿' : ''}</button>`).join('') || '<span class="pc-dim small">「角色」里还没有角色</span>'}</div>
+        ${(() => {
+            const avail = people.filter(c => c.key !== owner?.key && !holders.some(h => h.key === c.key));
+            const inChat = new Set(cast.map(c => c.key));
+            const now = avail.filter(c => inChat.has(c.key) || u.dest === c.key), rest = avail.filter(c => !inChat.has(c.key));
+            const chip = (c, small) => `<button class="pc-pill ${small ? 'tiny ' : ''}${u.dest === c.key ? 'on' : 'dashed'}" data-act="${u.draft ? 'outdest' : 'outgive'}" data-v="${esc(c.key)}" data-name="${esc(c.name)}">${u.draft ? '给' : ''}${esc(c.name)}${u.draft ? '穿' : ''}</button>`;
+            if (!avail.length) return '<span class="pc-dim small">「角色」里还没有角色</span>';
+            const q = String(ui.outPeopleQ || '').trim().toLowerCase();
+            return `${rest.length && now.length ? '</div><div class="pc-dim small" style="margin:8px 0 4px">这次聊天里的人</div><div class="pc-chips wrap">' : ''}${now.map(c => chip(c)).join('')}${rest.length ? `</div><div class="pc-mt-s" id="pc-outmore">${fold('outmore', now.length ? '别的角色' : '角色', rest.length + ' 个', `<label class="pc-search" style="margin:0 0 8px"><span class="pc-sr">搜名字</span>${ICON.search}<input data-bind="outPeopleQ" value="${esc(ui.outPeopleQ || '')}" placeholder="搜名字"></label><div class="pc-chips wrap">${rest.map(c => chip(c, true).replace('<button ', q && !c.name.toLowerCase().includes(q) ? '<button style="display:none" ' : '<button ')).join('')}</div>`)}</div><div>` : ''}`;
+        })()}</div>
       ${!u.draft && !holders.length ? '<div class="pc-dim small">点名字：给他穿，并设为他固定穿的衣服。</div>' : ''}
     </section>
     ${u.draft ? `<button class="pc-btn dark big pc-mt" data-act="outsave" ${o.tags.length ? '' : 'disabled'}>${seal()}保存</button>${o.tags.length ? '' : '<div class="pc-dim small pc-center" style="margin-top:6px">至少要有一件衣服才能保存</div>'}` : ''}
@@ -8635,6 +8905,7 @@ function viewCast(d) {
     </div>
     <label class="pc-search pc-mt-s"><span class="pc-sr">搜索</span>${ICON.search}<input data-bind="castSearch" value="${esc(ui.castSearch)}" placeholder="搜角色名"></label>
     <div class="pc-grid2 pc-mt-s">${list.map(card).join('') || empty('这里是空的', ui.castTab === 'user' ? '酒馆里还没有人设' : '酒馆里还没有角色卡')}</div>
+    ${(() => { const pre = ui.castTab === 'user' ? 'user:' : ui.castTab === 'char' ? 'char:' : ''; const n = pre ? Object.keys(d.options.hiddenChars || {}).filter(k => k.startsWith(pre)).length : 0; return n ? `<div class="pc-dim small pc-center pc-mt-s">从智库删掉了 ${n} 个${pre === 'user:' ? '人设' : '角色卡'} <button class="pc-pill dashed tiny" data-act="unhidechars" data-v="${pre}">全部恢复</button></div>` : ''; })()}
     <div style="height:24px"></div>`;
 }
 
@@ -8793,7 +9064,7 @@ function viewCharEdit(d) {
       </div>` : ''}
       <div class="pc-actions wrap" style="padding:10px"><button class="pc-btn" data-act="charkeep" data-w="photo" ${busy ? 'disabled' : ''}>存进相册</button><button class="pc-btn" data-act="charkeep" data-w="avatar" ${busy ? 'disabled' : ''}>设为头像</button><button class="pc-btn" data-act="charkeep" data-w="ref" ${busy ? 'disabled' : ''}>加进角色参考图</button></div></section>` : ''}
     <div class="pc-center pc-mt"><button class="pc-pill dashed" data-act="sharechar">分享这个角色</button></div>
-    ${c.kind === 'side' || c.kind === 'free' ? `<div class="pc-center pc-mt"><button class="pc-pill dashed danger" data-act="delside">删除这个角色</button></div>` : ''}
+    <div class="pc-center pc-mt"><button class="pc-pill dashed danger" data-act="${c.kind === 'side' || c.kind === 'free' ? 'delside' : 'delcard'}">${c.kind === 'char' ? '从智库删掉这个角色卡' : c.kind === 'user' ? '从智库删掉这个人设' : '删除这个角色'}</button></div>
     <div style="height:24px"></div>`;
 }
 
@@ -8986,7 +9257,7 @@ async function charAction(act, el) {
                     if (!ch.appearance.length) {
                         ch.appearance = p.appearance;
                         if (p.nsfw?.length && !(ch.nsfwBody || []).length) ch.nsfwBody = p.nsfw;
-                        if (p.outfit.length && !ch.outfits.length) { const o = { id: M.uid('o_'), name: '默认', tags: p.outfit }; ch.outfits.push(o); ch.outfitId = o.id; }
+                        if (p.outfit.length && !ch.outfits.length) { const o = { id: M.uid('o_'), name: `${ch.name}的衣服`, tags: p.outfit, auto: true }; ch.outfits.push(o); ch.outfitId = o.id; }
                     }
                     const al = new Set(String(ch.aliases || '').split(/[,，、;；\s]+/).filter(Boolean));
                     for (const a of p.aliases) if (a !== ch.name) al.add(a);
@@ -9027,7 +9298,7 @@ async function charAction(act, el) {
                 c.appearance = r.appearance;
                 if (r.nsfw?.length) c.nsfwBody = r.nsfw;
                 if (r.canon && !c.canonTag) { c.canonTag = r.canon; c.canonOn = true; toastr.info(`认出是同人角色「${r.canon}」，已经打开「同人角色」，不对可以关掉`, '读外貌', { timeOut: 4000 }); }
-                if (r.outfit.length && !c.outfits.length) { const o = { id: M.uid('o_'), name: '默认', tags: r.outfit }; c.outfits.push(o); c.outfitId = o.id; }
+                if (r.outfit.length && !c.outfits.length) { const o = { id: M.uid('o_'), name: `${c.name}的衣服`, tags: r.outfit, auto: true }; c.outfits.push(o); c.outfitId = o.id; }
                 toastr.success(`读到 ${r.appearance.length} 个外貌标签${r.outfit.length ? `，${r.outfit.length} 个衣服标签（存在「默认」这套里）` : ''}`, '角色');
             } catch (e) { toastr.error(e.message, '读取失败'); }
             ui.charBusy = ''; save();
@@ -9160,6 +9431,12 @@ async function charAction(act, el) {
         }
         case 'sharechar': await shareCharacterPost('character', c); return true;
         case 'shareout': { const o = C.currentOutfit(c); if (o) await shareCharacterPost('outfit', c, o); return true; }
+        case 'delcard': {
+            if (!(await confirmBox(`从智库删掉「${c.name}」？外貌、衣服、参考图都会清掉，角色页里不再显示。酒馆里的${c.kind === 'user' ? '人设' : '角色卡'}不会删；以后打开它聊天，它还会出现在「这次聊天」里，写了外貌就会重新显示。`, { ok: '删掉' }))) return true;
+            (d.options.hiddenChars ||= {})[c.key] = Date.now();
+            C.deleteChar(c.key); ui.view = 'cast'; render();
+            return true;
+        }
         case 'delside': {
             if (!(await confirmBox(`删除「${c.name}」？`))) return true;
             C.deleteChar(c.key); ui.view = 'cast'; render();
@@ -9246,25 +9523,12 @@ function viewBatch(d) {
     const done = st ? st.jobs.filter(j => ['done', 'error', 'skip'].includes(j.status)).length : 0;
     const names = batchUnits(d, b.text);
     const tpls = chosenTemplates('batch');
-    const count = names.reduce((n, u) => { const r = findUnit(d, u); const it = r && M.resolveTicket(d, r)?.item; return n + tpls.filter(t => !(b.skipExisting && it?.images.some(i => i.template === t))).length; }, 0);
+    const whoChars = b.who === 'chars' ? (b.chars || []).filter(k => C.getChar(k)?.appearance?.length) : [];
+    const count = b.who === 'chars' ? names.length * tpls.length * whoChars.length : names.reduce((n, u) => { const r = findUnit(d, u); const it = r && M.resolveTicket(d, r)?.item; return n + tpls.filter(t => !(b.skipExisting && it?.images.some(i => i.template === t))).length; }, 0);
     const tplText = tpls.map(t => d.templates[t]?.positive).filter(Boolean).join(' / ');
     const picked = st ? st.jobs.filter(j => j.picked).length : 0;
     const head = `<div class="pc-dhead"><button class="pc-round" data-act="back" aria-label="返回">‹</button><h2 class="pc-dtitle">批量生成例图</h2></div>`;
-    if (st && !b.showSetup) return `${head}
-    <section class="pc-card pc-pad pc-mt">
-      <div class="pc-row-between"><b>${done} / ${st.jobs.length} 张</b>
-        <div class="pc-chips" style="margin:0">${st.running ? `<button class="pc-round" data-act="batchpause" aria-label="${st.paused ? '继续' : '暂停'}">${st.paused ? '▶' : '❚❚'}</button><button class="pc-round" data-act="batchstop" aria-label="停止">■</button>` : ''}</div></div>
-      <div class="pc-prog"><i style="width:${st.jobs.length ? Math.round(done / st.jobs.length * 100) : 0}%"></i></div>
-      <div class="pc-dim small pc-mt-s">每张出来会自动存进那位画师的例图。${st.running ? '关掉这一页也会继续生成。' : ''}</div>
-      <div class="pc-actions wrap"><button class="pc-btn" data-act="batchsetup">${st.running ? '‹ 回到设置，再加一批' : '‹ 回到设置，再来一批'}</button></div>
-    </section>
-    <div class="pc-grid2 pc-mt pc-bgrid">${st.jobs.map((j, i) => `<div class="pc-bcell shot-${d.templates[j.templateId]?.shot || 'bust'} ${j.picked ? 'on' : ''} ${j.status}" ${j.status === 'done' ? `data-act="batchpick" data-i="${i}"` : ''} title="${esc(j.error)}">
-        ${j.image ? `<img src="${esc(j.image)}" alt="">` : `<span>${{ wait: '排队', run: '<span class="pc-busy">生成中</span>', error: '失败', skip: '已有，跳过' }[j.status] || ''}</span>`}
-        ${j.status === 'done' ? `<i class="pc-bpick">${j.picked ? '✓' : ''}</i>` : ''}
-        <b class="mono">${esc(M.ticketName(d, j.ref))} · ${esc(d.templates[j.templateId]?.name || '')}</b></div>`).join('')}</div>
-    ${!st.running && st.jobs.some(j => j.status === 'done') ? `<div class="pc-tip">点图片可以勾选，看中的几位能直接拼成一个画师组</div>
-    <button class="pc-btn dark big pc-mt" data-act="batchgroup" ${picked ? '' : 'disabled'}>${picked ? `把勾选的 ${picked} 位拼成画师组` : '先勾选几张'}</button>` : ''}
-    <div style="height:24px"></div>`;
+    if (st && !b.showSetup) return viewBatchResults(d, head);
     const doneN = st ? st.jobs.filter(j => ['done', 'error', 'skip'].includes(j.status)).length : 0;
     return `${head}
     ${st ? `<section class="pc-card pc-pad pc-mt pc-row-between"><div><b>${st.running ? '正在生成' : '上一批'} ${doneN} / ${st.jobs.length} 张</b><div class="pc-dim small">${st.running ? '再点「开始生成」会排到后面一起生成' : '点右边看结果'}</div></div><button class="pc-btn dark" data-act="batchview">看进度 ›</button></section>` : ''}
@@ -9275,11 +9539,13 @@ function viewBatch(d) {
       <div class="pc-chips wrap"><button class="pc-pill dashed tiny" data-act="batchfill" data-v="all">放进画师库里全部单个画师</button><button class="pc-pill dashed tiny" data-act="batchfill" data-v="empty">只放还没有例图的</button></div>
       ${label('用哪种提示词')}
       ${sampleChooser('batch')}
-      <label class="pc-switch"><input type="checkbox" data-bind-check="batch.skipExisting" ${b.skipExisting ? 'checked' : ''}><span></span>已经有这种例图的画师跳过</label>
+      ${b.who === 'chars' ? '' : `<label class="pc-switch"><input type="checkbox" data-bind-check="batch.skipExisting" ${b.skipExisting ? 'checked' : ''}><span></span>已经有这种例图的画师跳过</label>`}
       <label class="pc-switch"><input type="checkbox" data-opt="sampleSameSeed" ${d.options.sampleSameSeed !== false ? 'checked' : ''}><span></span>所有画师用同一个种子<small>同一张脸、同一个姿势，只比画风${Number(d.options.sampleSeed) > 0 ? ` · 种子 ${d.options.sampleSeed}` : ''}</small></label>
       ${d.options.sampleSameSeed !== false && Number(d.options.sampleSeed) > 0 ? '<button class="pc-pill dashed tiny" data-act="newsampleseed">换一个种子</button>' : ''}
-      <div class="pc-row-between"><span>共 ${names.length} 位画师，会生成 <b>${count}</b> 张</span><span class="pc-dim small">会用掉 NovelAI 点数</span></div>
+      <div class="pc-row-between"><span>共 ${names.length} 串${b.who === 'chars' ? ` × ${whoChars.length} 个角色` : ''}，会生成 <b>${count}</b> 张</span><span class="pc-dim small">会用掉 NovelAI 点数</span></div>
+      <div class="pc-dim small">画师库里已有的串，出的图照旧存进例图；不在库里的<b>不会自动建成画师串</b>，看中了再勾选存进去。</div>
     </section>
+    ${batchWhoCard(d)}
     <details class="pc-fold"><summary><b>例图提示词</b><i>${esc(tplText)}</i></summary><div class="pc-fold-in">
       ${tpls.map(t => `<div class="pc-label">${esc(d.templates[t]?.name)}</div><p class="pc-quote small mono">正面：${esc(d.templates[t]?.positive)}<br>负面：${esc(d.templates[t]?.negative)}</p>`).join('')}
       <button class="pc-btn" data-act="edittpl" data-scope="batch">改提示词</button></div></details>
@@ -9556,6 +9822,7 @@ function postWho(p) {
     const t = new Set(p.tags || []), who = new Set();
     if (t.has('男性裸体')) who.add('male');
     if (t.has('女性裸体')) who.add('female');
+    if (!who.size) { if (t.has('BL')) who.add('male'); if (t.has('GL')) who.add('female'); if (t.has('BG') || t.has('GB')) { who.add('male'); who.add('female'); } }
     return who;
 }
 const postHasNsfw = p => !!(p.nsfw || (p.images || []).some(i => i.nsfw));
@@ -9619,7 +9886,7 @@ function viewLobby(d) {
     const nm = lobbyNsfwMode();
     // 只看男性 / 女性的 NSFW：带 NSFW 的分享只留对得上的；没有 NSFW 的照常显示
     // 只有男性裸体 / 只有女性裸体：带裸体的分享只留只有这一种的；没有裸体的照常显示。R18G 没打开就不显示
-    const whoOk = p => p.mine || ((nm === 'all' || !postHasNsfw(p) || (postWho(p).has(nm) && postWho(p).size === 1)) && (d.options.lobbyR18g || !(p.tags || []).includes('R18G')));
+    const whoOk = p => p.mine || ((nm === 'all' || !(postHasNsfw(p) || (p.tags || []).some(t => t === 'NSFW' || NSFW_WHO.includes(t))) || (postWho(p).has(nm) && postWho(p).size === 1)) && (d.options.lobbyR18g || !(p.tags || []).includes('R18G')));
     const items = lb.items.filter(p => (p.mine || (!p.tags.some(t => blocked.has(t)) && !blk.users.includes(p.nickname) && !blk.posts.includes(p.id))) && (!lb.tag2 || p.tags.includes(lb.tag2)) && whoOk(p));
     const tags = lb.tags.map(t => t.tag).filter(t => t !== 'NSFW' && !AUD.includes(t) && !ORIENT.includes(t));
     for (const t of blocked) if (!tags.includes(t)) tags.push(t);
@@ -9628,22 +9895,22 @@ function viewLobby(d) {
     <div class="pc-row-between pc-mt-s"><h2 class="pc-h2" style="margin:0">共享</h2><button class="pc-btn dark" data-act="lobbyupload" aria-label="上传画师串">＋ 上传</button></div>
     <div class="pc-toprow">
       <label class="pc-search"><span class="pc-sr">搜索共享</span>${ICON.search}<input data-bind="lobby.q" data-enter="lobbysearch" value="${esc(lb.q)}" placeholder="搜画师名、标签"></label>
-      <div class="pc-vt"><button class="${view === 'grid' ? 'on' : ''}" data-act="lobbyview" data-v="grid" aria-label="网格">${SYM.grid}</button><button class="${view === 'list' ? 'on' : ''}" data-act="lobbyview" data-v="list" aria-label="列表">${SYM.list}</button></div>
+      <div class="pc-vt"><button class="${view === 'grid' ? 'on' : ''}" data-act="lobbyview" data-v="grid" aria-label="网格">${SYM.grid}</button><button class="${view === 'list' ? 'on' : ''}" data-act="lobbyview" data-v="list" aria-label="列表">${SYM.list}</button>${view === 'grid' ? `<button class="${d.options.lobbyThumb === 'crop' ? '' : 'on'}" data-act="lobbythumb" aria-label="完整图片" title="完整图片 / 裁成一样高" style="font-size:12px;padding:0 8px;width:auto">全图</button>` : ''}</div>
     </div>
     <div class="pc-lbf">
     <div class="pc-chips">
       ${[['', '全部'], ['group', '画师组'], ['artist', '单个画师'], ['character', '角色'], ['outfit', '服装']].map(([k, t]) => `<button class="pc-pill ${!lb.mine && lb.kind === k ? 'on' : 'dashed'}" data-act="lobbykind" data-kind="${k}">${t}</button>`).join('')}
       <button class="pc-pill ${lb.mine ? 'on' : 'dashed'}" data-act="lobbymine">我分享的</button>
     </div>
-    <div class="pc-chips"><span class="pc-lbf-k">裸体</span>${[['sfw', '不看'], ['male', '只男性'], ['female', '只女性'], ['all', '全都有']].map(([k, t]) => `<button class="pc-pill ${k !== 'sfw' ? 'nsfw' : ''} ${nm === k ? 'on' : 'dashed'}" data-act="lobbynsfw" data-v="${k}" title="只管共享里别人的图，你自己的例图一直显示">${t}</button>`).join('')}<button class="pc-pill ${d.options.lobbyR18g ? 'nsfw on' : 'blocked'}" data-act="lobbyr18g" title="猎奇、血腥">${d.options.lobbyR18g ? 'R18G' : '⊘ R18G'}</button></div>
+    <div class="pc-chips"><span class="pc-lbf-k">裸体</span>${[['sfw', '不看'], ['male', '只看男性的'], ['female', '只看女性的'], ['all', '男女都看']].map(([k, t]) => `<button class="pc-pill ${k !== 'sfw' ? 'nsfw' : ''} ${nm === k ? 'on' : 'dashed'}" data-act="lobbynsfw" data-v="${k}" title="只管共享里别人的图，你自己的例图一直显示">${t}</button>`).join('')}<button class="pc-pill ${d.options.lobbyR18g ? 'nsfw on' : 'blocked'}" data-act="lobbyr18g" title="猎奇、血腥">${d.options.lobbyR18g ? 'R18G' : '⊘ R18G'}</button></div>
     <div class="pc-chips"><span class="pc-lbf-k">标签</span>${AUD.map(t => `<button class="pc-pill ${blocked.has(t) ? 'blocked' : lb.tag === t ? 'on' : 'dashed'}" data-act="lobbyaud" data-tag="${t}" data-lp="ltag">${blocked.has(t) ? '⊘ ' : ''}${t}</button>`).join('')}${tags.slice(0, 24).map(t => `<button class="pc-pill ${blocked.has(t) ? 'blocked' : lb.tag2 === t ? 'on' : 'dashed'}" data-act="lobbytag2" data-tag="${esc(t)}" data-lp="ltag">${blocked.has(t) ? '⊘ ' : ''}${esc(t)}</button>`).join('')}</div>
-    <div class="pc-tip">点 = 只看这类　长按 = 屏蔽</div>
+    <div class="pc-tip">点标签 = 只看这类　长按标签或分享 = 屏蔽</div>
     </div>
     <style>.pc-lbf .pc-chips{gap:6px;margin:6px 0}.pc-lbf .pc-pill{font-size:13px;padding:4px 11px;min-height:0;line-height:1.5}.pc-lbf-k{align-self:center;font-size:15px;font-weight:600;margin-right:4px;white-space:nowrap}.pc-lbf .pc-tip{font-size:12px;margin:2px 0 6px}</style>
     <div class="pc-sort"><button class="${lb.sort === 'new' ? 'on' : ''}" data-act="lobbysort" data-sort="new">最新</button><button class="${lb.sort === 'hot' ? 'on' : ''}" data-act="lobbysort" data-sort="hot">最多人保存</button><button data-act="lobbyrefresh">刷新</button></div>
     ${lb.error ? `<div class="pc-card pc-pad pc-mt">连不上共享服务器：${esc(lb.error)}</div>` : ''}
     ${lb.loading && !lb.items.length ? '<div class="pc-tip pc-mt">加载中…</div>' : ''}
-    ${view === 'grid' ? `<div class="pc-grid2 pc-mt-s">${items.map(p => lobbyGridCard(p)).join('')}</div>` : `<div class="pc-list pc-mt">${items.map(p => lobbyCard(p)).join('')}</div>`}
+    ${view === 'grid' ? `<style>.pc-lobbygrid.thumb-full{display:block;columns:2;column-gap:12px}.pc-lobbygrid.thumb-full>.pc-ticket{display:inline-block;width:100%;margin:0 0 16px;break-inside:avoid;vertical-align:top}.pc-lobbygrid.thumb-full .pc-ticket-img{height:auto!important;-webkit-mask-image:none;mask-image:none}.pc-lobbygrid.thumb-full .pc-ticket-img img{height:auto;object-fit:contain;display:block}</style><div class="pc-grid2 pc-lobbygrid pc-mt-s ${d.options.lobbyThumb === 'crop' ? '' : 'thumb-full'}">${items.map(p => lobbyGridCard(p)).join('')}</div>` : `<div class="pc-list pc-mt">${items.map(p => lobbyCard(p)).join('')}</div>`}
     ${!lb.loading && !items.length ? '<div class="pc-empty pc-mt"><b>这里还没有东西</b><span>点右上角「＋ 上传」，填写画师串和署名就能发布。</span></div>' : ''}
     ${lb.items.length < lb.total ? '<button class="pc-btn pc-mt wide" data-act="lobbymore">加载更多</button>' : ''}
     <div style="height:24px"></div>`;
@@ -9654,7 +9921,7 @@ const lobbySpoiled = p => !p.mine && (p.tags || []).includes('剧透') && !lobby
 function lobbyGridCard(p) {
     const img = p.images[0];
     const banned = p.content?.artistString && M.bannedIn(getData(), p.content.artistString).length;
-    return `<article class="pc-ticket ${p.copied ? 'saved' : ''} ${banned ? 'banned' : ''}" data-act="lobbyopen" data-id="${p.id}">${banned ? '<span class="pc-banbadge">含黑名单画师</span>' : ''}
+    return `<article class="pc-ticket ${p.copied ? 'saved' : ''} ${banned ? 'banned' : ''}" data-act="lobbyopen" data-id="${p.id}" ${p.mine ? '' : 'data-lp="lpost"'}>${banned ? '<span class="pc-banbadge">含黑名单画师</span>' : ''}
       <div class="pc-ticket-img ${lobbySpoiled(p) ? 'pc-spoiler' : ''}">${img ? `<img src="${esc(L.lobbyImgUrl(img.url))}" loading="lazy" alt="">` : '<span>无图</span>'}${lobbySpoiled(p) ? `<button class="pc-spoil-btn" data-act="lobbyreveal" data-id="${p.id}">剧透 · 点一下看</button>` : ''}</div>
       <span class="pc-kind">${KIND_NAME[p.kind] || p.kind}</span>
       <button class="pc-use ${p.copied ? 'on dark' : ''}" data-act="lobbycopy" data-id="${p.id}" aria-label="保存">${p.copied ? SYM.check : SYM.down}</button>
@@ -9762,6 +10029,7 @@ function openLobbySheet(p) {
       ${p.note ? `<p class="pc-quote small">${esc(p.note)}</p>` : ''}
       ${lobbyHistoryHtml(p)}
       <div class="pc-chips wrap">${p.tags.map(t => `<span class="pc-tagchip ${t === 'NSFW' ? 'nsfw' : ''}">${esc(t)}</span>`).join('')}</div>
+      ${shareParamsLine(p.content?.params) ? `<div class="pc-field pc-mt-s"><span>作者出图用的参数</span><div class="pc-row-between" style="gap:8px"><small class="mono">${esc(shareParamsLine(p.content.params))}</small><button class="pc-pill dashed tiny" data-act="lobbyparams" data-id="${p.id}">套用</button></div><small class="pc-dim">保存时会绑定支持的模型，设成正文画师串后自动切换。</small></div>` : ''}
       <div class="pc-actions wrap">
         ${p.mine ? `<button class="pc-btn danger" data-act="lobbydel" data-id="${p.id}">删除</button><button class="pc-btn" data-act="lobbyedit" data-id="${p.id}">修改</button>` : `<button class="pc-btn" data-act="lobbyreport" data-id="${p.id}">举报</button><button class="pc-btn" data-act="lobbyblockpost" data-id="${p.id}">屏蔽这条</button><button class="pc-btn" data-act="lobbyblockuser" data-nick="${esc(p.nickname)}">屏蔽作者</button>`}
         <button class="pc-btn" data-act="lobbylike" data-id="${p.id}">♡ ${p.likes}</button>
@@ -9775,6 +10043,19 @@ function openLobbySheet(p) {
     });
 }
 
+async function lobbyPostMenu(id) {
+    const p = (ui.lobby.items || []).find(x => String(x.id) === String(id));
+    if (!p || p.mine) return;
+    buzz();
+    const tags = (p.tags || []).filter(t => t !== 'NSFW');
+    const i = await chooseBox(`「${p.name}」`, ['不看这条', `屏蔽「${p.nickname}」分享的全部`, ...tags.map(t => `屏蔽标签「${t}」`)]);
+    if (i == null || i < 0) return;
+    const b = lobbyBlock();
+    if (i === 0) { if (!b.posts.includes(p.id)) b.posts.push(p.id); commit(); toastr.info('这条不再显示，可以在 设置 → 共享 里恢复', '共享', { timeOut: 2500 }); return; }
+    if (i === 1) { if (!b.users.includes(p.nickname)) b.users.push(p.nickname); commit(); toastr.info(`已屏蔽「${p.nickname}」，可以在 设置 → 共享 里恢复`, '共享', { timeOut: 2500 }); return; }
+    const tag = tags[i - 2];
+    if (tag && !(getData().blockedTags || []).includes(tag)) toggleBlockTag(tag);
+}
 function toggleBlockTag(tag) {
     const d = getData();
     d.blockedTags ||= [];
@@ -9788,14 +10069,14 @@ function toggleBlockTag(tag) {
 
 function lobbyCard(p) {
     const img = p.images[0];
-    return `<article class="pc-lobby-card">
+    return `<article class="pc-lobby-card" ${p.mine ? '' : `data-lp="lpost" data-id="${p.id}"`}>
       <div class="pc-lobby-img ${lobbySpoiled(p) ? 'pc-spoiler' : ''}" ${img && !lobbySpoiled(p) ? `data-act="viewimg" data-src="${esc(L.lobbyImgUrl(img.url))}"` : ''}>${img ? `<img src="${esc(L.lobbyImgUrl(img.url))}" loading="lazy" alt="">` : '<span>无图</span>'}${lobbySpoiled(p) ? `<button class="pc-spoil-btn" data-act="lobbyreveal" data-id="${p.id}">剧透 · 点一下看</button>` : ''}${p.images.length > 1 ? `<em>+${p.images.length - 1}</em>` : ''}</div>
       <div class="pc-lobby-text">
         <div class="pc-row-between"><span class="pc-label">${esc(p.nickname)} · ${KIND_NAME[p.kind] || p.kind}</span>
           ${p.mine ? `<button class="pc-icon-btn small" data-act="lobbydel" data-id="${p.id}" aria-label="删除我分享的">×</button>` : `<button class="pc-icon-btn small" data-act="lobbyreport" data-id="${p.id}" aria-label="举报">${ICON.flag}</button>`}</div>
         <b>${esc(p.name)}</b>
         <small>${esc(p.note || p.content?.artistString || '')}</small>
-        <div class="pc-chips wrap tiny">${p.tags.map(t => `<span class="pc-tagchip ${t === 'NSFW' ? 'nsfw' : ''}">${esc(t)}</span>`).join('')}</div>
+        <div class="pc-chips wrap tiny">${p.tags.map(t => `<span data-lp="ltag" data-tag="${esc(t)}" class="pc-tagchip ${t === 'NSFW' ? 'nsfw' : ''}">${esc(t)}</span>`).join('')}</div>
         <div class="pc-row-between">
           <button class="pc-linkish ${p.liked ? 'strong' : ''}" data-act="lobbylike" data-id="${p.id}">♡ ${p.likes}</button>
           <span class="pc-label">${p.copies} 人保存</span>
@@ -10053,6 +10334,7 @@ function lpFire(t) {
     if (t.dataset.lp === 'ticket') openTicketSheet(refFrom(t));
     else if (t.dataset.lp === 'col') tagMenu(t.dataset.col);
     else if (t.dataset.lp === 'ltag') toggleBlockTag(t.dataset.tag);
+    else if (t.dataset.lp === 'lpost') lobbyPostMenu(t.dataset.id);
     else if (t.dataset.lp === 'vibe') vibeMenu(t.dataset.id);
     else if (t.dataset.lp === 'crgroup') crMenu(t.dataset.id);
 }
@@ -10179,6 +10461,16 @@ async function onClick(ev, outside = false) {
                 saveStudio(); render(); break;
             }
             case 'saveartist': await saveStudioTicket(); break;
+            case 'unhidechars': { const h = getData().options.hiddenChars || {}; for (const k of Object.keys(h)) if (k.startsWith(el.dataset.v || '')) delete h[k]; commit(); render(); break; }
+            case 'studiorename': {
+                const ref = studioSource(), g = ref && getData().groups[ref.id];
+                if (!g) break;
+                const n = await promptText('画师串的新名字', g.name);
+                if (n == null || !n.trim() || n.trim() === g.name) break;
+                g.name = n.trim();
+                await __mod_store.commit({ immediate: true, silent: true });
+                render(); toastr.success('改好了', '智库', { timeOut: 1500 }); break;
+            }
             case 'studiouse': useStudioForChat(); break;
             case 'unticket': E.setActive(null); break;
             case 'use': {
@@ -10406,9 +10698,20 @@ async function onClick(ev, outside = false) {
                 const p = sceneSnapshot();
                 if (!p.scene) { toastr.info('固定提示词还是空的', '固定提示词'); break; }
                 if ((ui.studio.scenes || []).some(x => sceneSig(x) === sceneSig(p))) { toastr.info('这段已经存过了', '固定提示词'); break; }
-                ui.studio.scenes = [{ ...p, name: sceneName(p.scene) || '没起名' }, ...(ui.studio.scenes || [])];
+                const st = ui.studio, current = () => ui.studio === st && String(st.scene || '').trim() === p.scene && (st.sceneEn || '') === p.sceneEn && (st.sceneSrc || '') === p.sceneSrc;
+                let guess = sceneName(p.scene);
+                if (el.dataset.ai) {
+                    el.disabled = true; el.innerHTML = '<span class="pc-busy">AI 起名中</span>';
+                    try { guess = await aiSceneName(p); } catch (e) { if (e?.name === 'AbortError') { render(); break; } toastr.warning('AI 起名没成功，先用自动截的：' + e.message, '固定提示词'); }
+                }
+                if (!current()) { render(); break; }
+                const name = await promptText(el.dataset.ai ? '给这段固定提示词起个名字（AI 起的，可以改）' : '给这段固定提示词起个名字', guess);
+                if (name == null || !current()) { render(); break; }
+                if ((ui.studio.scenes || []).some(x => sceneSig(x) === sceneSig(p))) { render(); break; }
+                ui.studio.scenes = [{ ...p, name: name.trim() || '没起名' }, ...(ui.studio.scenes || [])];
                 ui.studio.recentScenes = (ui.studio.recentScenes || []).filter(x => sceneSig(x) !== sceneSig(p));
-                saveStudio(); toastr.success('存好了，想换名字点它旁边的「改名」', '固定提示词', { timeOut: 2500 }); render(); break;
+                ui.studio.open.savedScenes = true;
+                saveStudio(); toastr.success(`存好了：「${name.trim() || '没起名'}」`, '固定提示词', { timeOut: 2000 }); render(); break;
             }
             case 'sceneuse': {
                 const p = (el.dataset.kind === 'saved' ? ui.studio.scenes : ui.studio.recentScenes)?.[Number(el.dataset.i)];
@@ -10466,6 +10769,19 @@ async function onClick(ev, outside = false) {
                     saveStudio(); box.closeModal(); render();
                     toastr.success('改好了', '固定提示词', { timeOut: 1200 });
                 });
+                break;
+            }
+            case 'sceneainame': {
+                const st = ui.studio, p = st.scenes?.[Number(el.dataset.i)];
+                if (!p) break;
+                const beforeName = p.name, beforeScene = p.scene;
+                el.disabled = true; el.innerHTML = '<span class="pc-busy">起名中</span>';
+                try {
+                    const n = await aiSceneName(p);
+                    if (ui.studio !== st || !st.scenes?.includes(p) || p.name !== beforeName || p.scene !== beforeScene) break;
+                    const old = p.name; p.name = n; saveStudio();
+                    toastr.success(`「${old || '没起名'}」改叫「${n}」，不喜欢点「修改」自己改`, '固定提示词', { timeOut: 2500 });
+                } catch (e) { if (e?.name !== 'AbortError') toastr.error('AI 起名失败：' + e.message, '固定提示词'); } finally { render(); }
                 break;
             }
             case 'scenerename': {
@@ -10642,7 +10958,7 @@ async function onClick(ev, outside = false) {
             case 'quickshare': {
                 if (!L.serverBase()) { toastr.warning('先到「设置」里填共享服务器地址', '共享'); break; }
                 const st = ui.studio;
-                openSharedUpload({ artistString: st.pos, negative: st.neg, image: st.result });
+                openSharedUpload({ artistString: st.pos, negative: st.neg, image: st.result, params: shareImageParams(st.sent || {}) });
                 break;
             }
             case 'saveresult': await saveStudioResult(); break;
@@ -10677,7 +10993,7 @@ async function onClick(ev, outside = false) {
             case 'cfyinsert': await E.insertIntoLastMessage(loadCfy().result); toastr.success('已插到聊天最后一楼', '智库'); break;
             case 'cfyshare': {
                 if (!L.serverBase()) { toastr.warning('先到「设置」里填共享服务器地址', '共享'); break; }
-                const c = loadCfy(); openSharedUpload({ artistString: c.pos, negative: c.neg, image: c.result }); break;
+                const c = loadCfy(); openSharedUpload({ artistString: c.pos, negative: c.neg, image: c.result, params: shareImageParams(c.sent || {}) }); break;
             }
             case 'cfyclear': loadCfy().result = ''; ui.cfy.sent = null; render(); break;
             case 'insertresult':
@@ -10689,6 +11005,13 @@ async function onClick(ev, outside = false) {
             case 'batchsetup': ui.batch.showSetup = true; render(); root.querySelector('.pc-body')?.scrollTo(0, 0); break;
             case 'batchview': ui.batch.showSetup = false; render(); root.querySelector('.pc-body')?.scrollTo(0, 0); break;
             case 'batchpick': { const j = ui.batch.state?.jobs[Number(el.dataset.i)]; if (j) { j.picked = !j.picked; render(); } break; }
+            case 'batchwho': ui.batch.who = el.dataset.v; render(); break;
+            case 'batchchar': { const s = new Set(ui.batch.chars || []); const k = el.dataset.v; if (s.has(k)) s.delete(k); else s.add(k); ui.batch.chars = [...s]; render(); break; }
+            case 'batchuseref': ui.batch.useRef = el.dataset.v === '1'; render(); break;
+            case 'batchviewmode': ui.batch.view = el.dataset.v; render(); break;
+            case 'batchsave': try { await batchSavePicked(d); } catch (e) { toastr.error(e.message, '存进画师库'); } render(); break;
+            case 'batchtochar': try { await batchToChar(d); } catch (e) { toastr.error(e.message, '存进角色相册'); } render(); break;
+            case 'batchexport': try { await batchExport(d); } catch (e) { toastr.error(e.message, '导出'); } break;
             case 'batchfill': {
                 const arts = Object.values(d.artists).filter(a => (el.dataset.v === 'all' || !a.images.length) && !M.banInfo(d, a.tag));
                 ui.batch.text = arts.map(a => a.tag.replace(/^artist:/, '')).join('\n');
@@ -10698,10 +11021,12 @@ async function onClick(ev, outside = false) {
             case 'batchstop': ui.batch.state?.stop(); break;
             case 'batchgroup': {
                 const picked = ui.batch.state.jobs.filter(j => j.picked);
-                const name = await promptText('新画师组的名字', picked.map(j => M.ticketName(d, j.ref)).slice(0, 2).join(' + '));
+                // 不在画师库里的串：现在才把里面的画师建好
+                const memberIds = j => j.ref && M.resolveTicket(d, j.ref) ? (j.ref.type === 'group' ? (d.groups[j.ref.id]?.members || []).map(m => m.artistId) : [j.ref.id]) : M.parseArtistString(j.text || '').members.map(m => M.ensureArtist(d, m.tag).id);
+                const name = await promptText('新画师组的名字', [...new Set(picked.map(j => batchRowName(d, j)))].slice(0, 2).join(' + '));
                 if (!name) break;
                 const id = M.uid('g_');
-                d.groups[id] = { id, name, note: '', extra: '', collections: [], fav: false, images: [], createdAt: Date.now(), usedAt: 0, members: [...new Set(picked.flatMap(j => j.ref.type === 'group' ? (d.groups[j.ref.id]?.members || []).map(m => m.artistId) : [j.ref.id]))].map(artistId => ({ artistId, weight: 1 })) };
+                d.groups[id] = { id, name, note: '', extra: '', collections: [], fav: false, images: [], createdAt: Date.now(), usedAt: 0, members: [...new Set(picked.flatMap(memberIds))].map(artistId => ({ artistId, weight: 1 })) };
                 commit();
                 ui.view = 'group'; ui.detailId = id; ui.backTo = 'book'; render();
                 break;
@@ -10829,6 +11154,8 @@ async function onClick(ev, outside = false) {
             case 'lobbykind': ui.lobby.kind = el.dataset.kind; ui.lobby.mine = false; loadLobby(); break;
             case 'lobbytag2': { const t = el.dataset.tag; if ((d.blockedTags || []).includes(t)) { toggleBlockTag(t); break; } ui.lobby.tag2 = ui.lobby.tag2 === t ? '' : t; render(); break; }
             case 'lobbyview': d.options.lobbyView = el.dataset.v; commit(); break;
+            case 'lobbyparams': { const p = ui.lobby.items.find(x => x.id === el.dataset.id); const pr = p?.content?.params; if (!pr) break; if (!(await confirmBox(`把出图设置换成：${shareParamsLine(pr)}？`, { ok: '换', cancel: '算了' }))) break; if (!applyShareParams(pr)) { toastr.info('这条分享使用其他生图通道，参数未套用', '共享'); break; } toastr.success('出图参数换好了', '共享', { timeOut: 2000 }); render(); break; }
+            case 'lobbythumb': d.options.lobbyThumb = d.options.lobbyThumb === 'crop' ? 'full' : 'crop'; commit(); break;
             case 'lobbyopen': { const p = ui.lobby.items.find(x => x.id === el.dataset.id); if (p) openLobbySheet(p); break; }
             case 'lobbymine': ui.lobby.mine = !ui.lobby.mine; ui.lobby.kind = ''; loadLobby(); break;
             case 'lobbysort': ui.lobby.sort = el.dataset.sort; loadLobby(); break;
@@ -11020,6 +11347,8 @@ function onInput(ev) {
         }
         if (el.dataset.bind === 'studio.sceneQ' || el.dataset.bind === 'combine.q') { clearTimeout(onInput.sq); onInput.sq = setTimeout(render, 250); }
         if (el.dataset.bind === 'studio.pos') { const w = root.querySelector('#pc-pos-ban'); if (w) w.innerHTML = banWarn(getData(), el.value) + lintHtml(el.value); }
+        if (el.dataset.bind === 'batchCharQ') { const q = el.value.trim().toLowerCase(); root.querySelectorAll('#pc-bcharmore [data-name]').forEach(b => { b.style.display = q && !b.dataset.name.toLowerCase().includes(q) ? 'none' : ''; }); }
+        if (el.dataset.bind === 'outPeopleQ') { const q = el.value.trim().toLowerCase(); root.querySelectorAll('#pc-outmore [data-name]').forEach(b => { b.style.display = q && !b.dataset.name.toLowerCase().includes(q) ? 'none' : ''; }); }
         if (el.dataset.bind === 'batch.text') { const w = root.querySelector('#pc-batch-ban'); if (w) w.innerHTML = batchBanWarn(getData(), el.value); }
         if (String(el.dataset.bind).startsWith('cfy.')) { clearTimeout(onInput.cf); onInput.cf = setTimeout(saveCfy, 600); }
         if (['studio.pos', 'studio.neg', 'studio.scene', 'studio.sceneEn'].includes(el.dataset.bind)) { updateStudioPreview(); clearTimeout(onInput.ss); onInput.ss = setTimeout(saveStudio, 600); }
@@ -11165,7 +11494,7 @@ async function onChangeEv(ev) {
         if (!f || ui.poseBusy) return;
         ui.poseBusy = true; render();
         try {
-            const r = await T.imagePose(await shrinkDataUrl(await fileToDataUrl(f), 1024, 0.88));
+            const r = await T.imagePose(await shrinkDataUrl(await fileToDataUrl(f), 1536, 0.9));
             ui.poseBusy = false; render();
             showPose(r);
         } catch (e) { ui.poseBusy = false; render(); toastr.error(e.message || String(e), '看不了图', { timeOut: 9000 }); }
@@ -11199,7 +11528,7 @@ async function onChangeEv(ev) {
         ui.img2pBusy = true; render();
         try {
             let r = await readImagePrompt(f).catch(() => null), from = 'meta';
-            if (!r?.positive) { from = 'ai'; r = await T.imageToPrompt(await shrinkDataUrl(await fileToDataUrl(f), 1024, 0.88)); }
+            if (!r?.positive) { from = 'ai'; r = await T.imageToPrompt(await shrinkDataUrl(await fileToDataUrl(f), 1536, 0.9)); }
             ui.img2pBusy = false; render();
             showImg2Prompt(r, from);
         } catch (e) { ui.img2pBusy = false; render(); toastr.error(e.message || String(e), '看不了图', { timeOut: 9000 }); }
@@ -11393,6 +11722,184 @@ async function saveStudioResult() {
     toastr.success('已保存', '智库');
 }
 
+/** 批量设置：画谁（模板里的人 / 角色页的角色） */
+function batchWhoCard(d) {
+    const b = ui.batch;
+    const chars = b.who === 'chars';
+    const cast = C.currentCast().map(x => x.char).filter(c => c.appearance?.length);
+    const inChat = new Set(cast.map(c => c.key));
+    const rest = [...new Map(Object.values(d.characters).filter(c => c.appearance?.length && !inChat.has(c.key)).map(c => [c.key, c])).values()];
+    const sel = new Set(b.chars || []);
+    const row = c => `<button class="pc-bwho ${sel.has(c.key) ? 'on' : ''}" data-act="batchchar" data-v="${esc(c.key)}" data-name="${esc(c.name)}">${C.avatarUrl(c) ? `<img src="${esc(C.avatarUrl(c))}" alt="" onerror="this.remove()">` : '<i></i>'}<span><b>${esc(c.name)}</b><small>外貌 ${c.appearance.length} 词 · ${c.outfitMode === 'fixed' && C.currentOutfit(c) ? '衣服：' + esc(C.currentOutfit(c).name) : '衣服跟剧情（不带衣服）'}${c.charRef && d.charRefGroups?.[c.charRef] ? ' · 有角色参考' : ''}</small></span><em>${sel.has(c.key) ? '✓' : ''}</em></button>`;
+    const q = String(ui.batchCharQ || '').trim().toLowerCase();
+    return `<style>.pc-bwho{display:flex;align-items:center;gap:9px;width:100%;margin:0 0 6px;padding:7px 10px;border:1.5px dashed var(--pc-dash);border-radius:14px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}.pc-bwho.on{border-style:solid;border-color:var(--pc-ink);background:var(--pc-paper-2)}.pc-bwho img,.pc-bwho i{width:32px;height:32px;border-radius:10px;object-fit:cover;flex:none;background:var(--pc-gold)}.pc-bwho span{flex:1;min-width:0}.pc-bwho b{display:block;font-size:14px}.pc-bwho small{display:block;font-size:11.5px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pc-bwho em{font-style:normal;flex:none}</style>
+    <section class="pc-card pc-pad pc-mt">
+      <b>画谁</b>
+      <div class="pc-chips wrap pc-mt-s"><button class="pc-pill ${!chars ? 'on' : 'dashed'}" data-act="batchwho" data-v="tpl">模板里的人</button><button class="pc-pill ${chars ? 'on' : 'dashed'}" data-act="batchwho" data-v="chars">选角色</button></div>
+      ${!chars ? '<div class="pc-dim small">用例图模板里的人，只比画风（跟以前一样）。</div>' : `
+      <div class="pc-dim small" style="margin:2px 0 8px">每串画师 × 每个选中的角色各画一张：角色外貌 + 固定的衣服 + 模板的景别。只列写了外貌的角色。</div>
+      ${cast.length ? `<div class="pc-label" style="margin-top:0">这次聊天里的人</div>${cast.map(row).join('')}` : ''}
+      ${rest.length ? `<div id="pc-bcharmore">${fold('bcharmore', cast.length ? '别的角色' : '角色', rest.length + ' 个' + (rest.filter(c => sel.has(c.key)).length ? ` · 选了 ${rest.filter(c => sel.has(c.key)).length}` : ''), `<label class="pc-search" style="margin:0 0 8px"><span class="pc-sr">搜名字</span>${ICON.search}<input data-bind="batchCharQ" value="${esc(ui.batchCharQ || '')}" placeholder="搜名字"></label>${rest.map(c => row(c).replace('<button ', q && !c.name.toLowerCase().includes(q) ? '<button style="display:none" ' : '<button ')).join('')}`)}</div>` : ''}
+      ${!cast.length && !rest.length ? '<div class="pc-dim small">还没有写了外貌的角色，先到「角色」页写外貌。</div>' : ''}
+      <div class="pc-label">角色参考</div>
+      <div class="pc-chips wrap"><button class="pc-pill tiny ${b.useRef !== false ? 'on' : 'dashed'}" data-act="batchuseref" data-v="1">绑了就带上</button><button class="pc-pill tiny ${b.useRef === false ? 'on' : 'dashed'}" data-act="batchuseref" data-v="0">不带</button><span class="pc-dim small" style="align-self:center">只有 NAI 4.5 能用</span></div>`}
+    </section>`;
+}
+/** 批量里一张图属于哪一行（哪串画师）、哪一列（哪个角色 / 模板） */
+function batchRowKey(j) { return j.ref ? j.ref.type + ':' + j.ref.id : 't:' + j.text; }
+function batchRowName(d, j) {
+    if (j.ref && M.resolveTicket(d, j.ref)) return M.ticketName(d, j.ref);
+    if (j.name) return j.name;
+    const p = M.parseArtistString(j.text || '');
+    return p.members.length ? p.members.slice(0, 3).map(m => m.tag.replace(/^artist:/, '')).join(' + ') + (p.members.length > 3 ? ' …' : '') : String(j.text || '').slice(0, 30);
+}
+function batchColKey(j) { return (j.char || '') + '|' + j.templateId; }
+function batchColName(d, j, multiTpl) {
+    const t = d.templates[j.templateId]?.name || '';
+    return j.char ? (multiTpl ? `${j.charName} · ${t}` : j.charName) : t;
+}
+function batchLayout(d, jobs) {
+    const rows = [], cols = [], rIdx = new Map(), cIdx = new Map();
+    const multiTpl = new Set(jobs.map(j => j.templateId)).size > 1;
+    jobs.forEach(j => {
+        const rk = batchRowKey(j), ck = batchColKey(j);
+        if (!rIdx.has(rk)) { rIdx.set(rk, rows.length); rows.push({ key: rk, name: batchRowName(d, j), text: j.ref && M.resolveTicket(d, j.ref) ? M.ticketString(d, j.ref) : j.text, inLib: !!(j.ref && M.resolveTicket(d, j.ref)) }); }
+        if (!cIdx.has(ck)) { cIdx.set(ck, cols.length); cols.push({ key: ck, name: batchColName(d, j, multiTpl) }); }
+    });
+    const cell = new Map(jobs.map((j, i) => [rIdx.get(batchRowKey(j)) + ':' + cIdx.get(batchColKey(j)), i]));
+    return { rows, cols, cell };
+}
+function viewBatchResults(d, head) {
+    const b = ui.batch, st = b.state;
+    const done = st.jobs.filter(j => ['done', 'error', 'skip'].includes(j.status)).length;
+    const picked = st.jobs.filter(j => j.picked && j.image);
+    const pickNew = picked.filter(j => !j.saved).length, pickChar = picked.filter(j => j.char && !j.toChar).length;
+    const table = (b.view || 'table') === 'table';
+    const shotOf = j => d.templates[j.templateId]?.shot || 'bust';
+    const cellHtml = (j, i) => `<div class="pc-bcell shot-${shotOf(j)} ${j.picked ? 'on' : ''} ${j.status}" ${j.status === 'done' ? `data-act="batchpick" data-i="${i}"` : ''} title="${esc(j.error)}">
+        ${j.image ? `<img src="${esc(j.image)}" alt="">` : `<span>${{ wait: '排队', run: '<span class="pc-busy">生成中</span>', error: '失败', skip: '已有，跳过' }[j.status] || ''}</span>`}
+        ${j.status === 'done' ? `<i class="pc-bpick">${j.picked ? '✓' : ''}</i>` : ''}
+        ${table ? '' : `<b class="mono">${esc(batchRowName(d, j))} · ${esc(batchColName(d, j, true))}</b>`}${j.saved ? '<u class="pc-bsaved">已存</u>' : ''}</div>`;
+    let body;
+    if (table) {
+        const { rows, cols, cell } = batchLayout(d, st.jobs);
+        body = `<div class="pc-btable" style="grid-template-columns:72px repeat(${cols.length},minmax(84px,1fr))"><span></span>${cols.map(c => `<span class="pc-bth">${esc(c.name)}</span>`).join('')}
+          ${rows.map((r, ri) => `<span class="pc-btr" title="${esc(r.text)}">${esc(r.name)}${r.inLib ? '' : '<em>不在库里</em>'}</span>${cols.map((c, ci) => { const i = cell.get(ri + ':' + ci); return i === undefined ? '<span></span>' : cellHtml(st.jobs[i], i); }).join('')}`).join('')}</div>`;
+    } else body = `<div class="pc-grid2 pc-bgrid">${st.jobs.map(cellHtml).join('')}</div>`;
+    const any = st.jobs.some(j => j.status === 'done');
+    return `${head}<style>.pc-btable{display:grid;gap:6px;overflow-x:auto;align-items:start;scrollbar-width:none}.pc-btable::-webkit-scrollbar{display:none}.pc-bth{font-size:12px;text-align:center;opacity:.75;align-self:end;line-height:1.3}.pc-btr{font-size:12px;line-height:1.35;align-self:center;word-break:break-all}.pc-btr em{display:block;font-style:normal;font-size:10.5px;opacity:.6}.pc-btable .pc-bcell b{display:none}.pc-bsaved{position:absolute;left:5px;bottom:5px;text-decoration:none;font-size:10.5px;padding:0 6px;border-radius:6px;background:rgba(0,0,0,.55);color:#fff}.pc-bcell{position:relative}</style>
+    <section class="pc-card pc-pad pc-mt">
+      <div class="pc-row-between"><b>${done} / ${st.jobs.length} 张</b>
+        <div class="pc-chips" style="margin:0">${st.running ? `<button class="pc-round" data-act="batchpause" aria-label="${st.paused ? '继续' : '暂停'}">${st.paused ? '▶' : '❚❚'}</button><button class="pc-round" data-act="batchstop" aria-label="停止">■</button>` : ''}</div></div>
+      <div class="pc-prog"><i style="width:${st.jobs.length ? Math.round(done / st.jobs.length * 100) : 0}%"></i></div>
+      <div class="pc-dim small pc-mt-s">画师库里已有的串（不画角色时）出的图会自动存进例图，标着「已存」；别的都只在这里，勾选了再存，或者整包导出。${st.running ? '关掉这一页也会继续生成。' : ''}</div>
+      <div class="pc-actions wrap"><button class="pc-btn" data-act="batchsetup">${st.running ? '‹ 回到设置，再加一批' : '‹ 回到设置，再来一批'}</button></div>
+    </section>
+    <div class="pc-seg pc-mt"><button class="${table ? 'on' : ''}" data-act="batchviewmode" data-v="table">对照表</button><button class="${!table ? 'on' : ''}" data-act="batchviewmode" data-v="list">一张张看</button></div>
+    <div class="pc-mt-s">${body}</div>
+    ${any ? `<div class="pc-tip">点图勾选。${table ? '一行是一串画师，一列是一个角色或模板。' : ''}</div>
+    <div class="pc-actions wrap pc-mt-s" style="flex-direction:column;align-items:stretch">
+      <button class="pc-btn" data-act="batchsave" ${pickNew ? '' : 'disabled'}>${pickNew ? `把勾选的 ${pickNew} 张存进画师库（没有的串会建好）` : '勾选几张，存进画师库'}</button>
+      ${st.jobs.some(j => j.char) ? `<button class="pc-btn" data-act="batchtochar" ${pickChar ? '' : 'disabled'}>${pickChar ? `把勾选的 ${pickChar} 张存进角色相册` : '勾选角色的图，存进角色相册'}</button>` : ''}
+      <button class="pc-btn" data-act="batchgroup" ${picked.length ? '' : 'disabled'}>${picked.length ? `把勾选的画师拼成一个画师组` : '勾选几张，把画师拼成画师组'}</button>
+      <button class="pc-btn dark" data-act="batchexport" ${st.running ? 'disabled' : ''}>${st.running ? '出完了才能导出' : '导出整包（预览页 + 原图 + 能导回智库的包）'}</button>
+    </div>` : ''}
+    <div style="height:24px"></div>`;
+}
+/** 勾选的批量图存进画师库：没有的串现在才建 */
+async function batchSavePicked(d) {
+    const jobs = ui.batch.state.jobs.filter(j => j.picked && j.image && !j.saved);
+    let made = 0, saved = 0;
+    for (const j of jobs) {
+        let ref = j.ref && M.resolveTicket(d, j.ref) ? j.ref : null;
+        if (!ref) {
+            const p = M.parseArtistString(j.text || '');
+            const single = p.members.length === 1 && !p.extra && Math.abs(p.members[0].weight - 1) < 0.001;
+            ref = findUnit(d, single ? { tag: p.members[0].tag } : { text: j.text, members: p.members })
+                || (single ? { type: 'artist', id: M.ensureArtist(d, p.members[0].tag).id } : M.createFromString(d, { name: j.name || '', text: j.text, note: '批量生成时存的' }));
+            if (!ref) continue;
+            made++;
+            for (const o of ui.batch.state.jobs) if (batchRowKey(o) === 't:' + j.text) o.ref = ref;
+        }
+        const tpl = d.templates[j.templateId];
+        await E.saveImageTo(ref, j.image, { nsfw: !!tpl?.nsfw, templateId: j.char ? '' : (tpl?.id || '') });
+        j.saved = true; saved++;
+    }
+    commit();
+    toastr.success(`存了 ${saved} 张${made ? `，新建 ${made} 串` : ''}`, '批量生成例图');
+}
+async function batchToChar(d) {
+    const jobs = ui.batch.state.jobs.filter(j => j.picked && j.image && j.char && !j.toChar);
+    let n = 0;
+    for (const j of jobs) {
+        const c = C.getChar(j.char);
+        if (!c) continue;
+        const { path } = await uploadImage(j.image, `charphoto_${M.uid('')}`);
+        (c.photos ||= []).unshift({ path, nsfw: !!d.templates[j.templateId]?.nsfw, at: Date.now(), artist: batchRowName(d, j) });
+        C.saveChar(c); j.toChar = true; n++;
+    }
+    commit();
+    toastr.success(`存进角色相册 ${n} 张（角色页「相册」里能设成头像）`, '批量生成例图');
+}
+/** 不压缩的 zip（图片本来就压过了） */
+function makeZip(files) {
+    const T = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; T[n] = c >>> 0; }
+    const crc = u8 => { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = T[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+    const enc = new TextEncoder(), parts = [], central = [];
+    let off = 0;
+    for (const f of files) {
+        const name = enc.encode(f.name), data = f.data, c = crc(data);
+        const h = new DataView(new ArrayBuffer(30));
+        h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint32(14, c, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, name.length, true);
+        parts.push(new Uint8Array(h.buffer), name, data);
+        const e = new DataView(new ArrayBuffer(46));
+        e.setUint32(0, 0x02014b50, true); e.setUint16(4, 20, true); e.setUint16(6, 20, true); e.setUint16(8, 0x0800, true); e.setUint32(16, c, true); e.setUint32(20, data.length, true); e.setUint32(24, data.length, true); e.setUint16(28, name.length, true); e.setUint32(42, off, true);
+        central.push(new Uint8Array(e.buffer), name);
+        off += 30 + name.length + data.length;
+    }
+    const size = central.reduce((n, x) => n + x.length, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, size, true); end.setUint32(16, off, true);
+    return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+async function dataUrlBytes(u) {
+    if (String(u).startsWith('data:')) { const b = atob(String(u).split(',')[1] || ''); const out = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) out[i] = b.charCodeAt(i); return out; }
+    return new Uint8Array(await (await fetch(u)).arrayBuffer());
+}
+/** 导出这批：预览.html（对照表 / 不对照）+ 图片 + 能导回智库的画师串包 */
+async function batchExport(d) {
+    const st = ui.batch.state;
+    const jobs = st.jobs.map((j, i) => ({ j, i })).filter(x => x.j.image);
+    if (!jobs.length) { toastr.warning('还没有出好的图', '导出'); return; }
+    toastr.info(`正在打包 ${jobs.length} 张…`, '导出', { timeOut: 2000 });
+    const safe = s => String(s || '').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40) || 'x';
+    const { rows, cols, cell } = batchLayout(d, st.jobs);
+    const files = [], fileOf = new Map(), items = new Map();
+    for (const { j, i } of jobs) {
+        const ext = /^data:image\/jpe?g/.test(j.image) ? 'jpg' : /^data:image\/webp/.test(j.image) ? 'webp' : 'png';
+        const name = `图片/${String(i + 1).padStart(3, '0')}_${safe(batchRowName(d, j))}__${safe(batchColName(d, j, true))}.${ext}`;
+        files.push({ name, data: await dataUrlBytes(j.image) });
+        fileOf.set(i, name);
+        const rk = batchRowKey(j), text = j.ref && M.resolveTicket(d, j.ref) ? M.ticketString(d, j.ref) : j.text;
+        if (!items.has(rk)) items.set(rk, { key: 'batch:' + text, name: batchRowName(d, j), text, note: '批量生成导出', images: [] });
+        const tpl = d.templates[j.templateId];
+        items.get(rk).images.push({ template: j.char ? '' : (tpl?.id || ''), nsfw: !!tpl?.nsfw, seed: `${j.char || 'tpl'}-${j.templateId}`, data: j.image });
+    }
+    const pack = { app: 'zhiku-pack', version: 1, createdAt: new Date().toISOString(), items: [...items.values()] };
+    files.push({ name: '智库画师串包.json', data: new TextEncoder().encode(JSON.stringify(pack)) });
+    const h = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const tableHtml = `<table><tr><th></th>${cols.map(c => `<th>${h(c.name)}</th>`).join('')}</tr>${rows.map((r, ri) => `<tr><td class="rn"><b>${h(r.name)}</b><code title="点一下复制">${h(r.text)}</code></td>${cols.map((c, ci) => { const i = cell.get(ri + ':' + ci); const f = i !== undefined && fileOf.get(i); return `<td>${f ? `<a href="${h(f)}" target="_blank"><img loading="lazy" src="${h(f)}"></a>` : ''}</td>`; }).join('')}</tr>`).join('')}</table>`;
+    const listHtml = rows.map((r, ri) => `<figure><figcaption><b>${h(r.name)}</b><code title="点一下复制">${h(r.text)}</code></figcaption><div>${cols.map((c, ci) => { const i = cell.get(ri + ':' + ci); const f = i !== undefined && fileOf.get(i); return f ? `<a href="${h(f)}" target="_blank"><img loading="lazy" src="${h(f)}" title="${h(c.name)}"><span>${h(c.name)}</span></a>` : ''; }).join('')}</div></figure>`).join('');
+    const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>智库批量生图</title>
+<style>body{margin:0;padding:14px;background:#7ea29c;font:14px/1.55 "Noto Serif SC",serif;color:#3a2a22}h1{font-size:18px;margin:0 0 4px;color:#fff}p.s{margin:0 0 10px;color:#eef;font-size:12px}.seg{display:inline-flex;background:#f4efe4;border:1.5px solid #3a2a22;border-radius:99px;padding:3px;margin-bottom:12px}.seg button{border:0;background:none;padding:5px 14px;border-radius:99px;font:inherit;cursor:pointer}.seg .on{background:#3a2a22;color:#fff}.wrap{overflow-x:auto;scrollbar-width:none}.wrap::-webkit-scrollbar{display:none}table{border-collapse:separate;border-spacing:6px;background:#f4efe4;border:1.5px solid #3a2a22;border-radius:16px;padding:6px}th{font-size:12px;font-weight:600}td{vertical-align:top}td img{width:150px;max-width:28vw;border-radius:10px;display:block}td.rn{width:150px;font-size:12px}code{display:block;font-size:11px;color:#6e5a4d;word-break:break-all;cursor:pointer;margin-top:3px}main{display:grid;gap:12px}figure{margin:0;background:#f4efe4;border:1.5px solid #3a2a22;border-radius:16px;padding:10px 12px}figure div{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}figure a{width:150px;max-width:44vw;text-decoration:none;color:inherit;font-size:11px;text-align:center}figure img{width:100%;border-radius:10px;display:block}.hide{display:none}</style>
+<h1>智库批量生图</h1><p class="s">${new Date().toLocaleString()} · ${rows.length} 串 × ${cols.length} 列 · 点图看大图，点提示词复制。智库「设置 → 数据 → 导入画师串包」选 智库画师串包.json 能把画师串和图导回画师库。</p>
+<div class="seg"><button class="on" data-v="t">对照表</button><button data-v="l">不对照</button></div>
+<div id="t" class="wrap">${tableHtml}</div><main id="l" class="hide">${listHtml}</main>
+<script>document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.seg button').forEach(x=>x.classList.toggle('on',x===b));document.getElementById('t').classList.toggle('hide',b.dataset.v!=='t');document.getElementById('l').classList.toggle('hide',b.dataset.v!=='l');});document.querySelectorAll('code').forEach(c=>c.onclick=()=>{navigator.clipboard?.writeText(c.textContent);c.style.background='#e8dcc8';setTimeout(()=>c.style.background='',600);});</script>`;
+    files.unshift({ name: '预览.html', data: new TextEncoder().encode(html) });
+    saveBlob(makeZip(files), `智库批量_${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.zip`);
+}
 /** 批量的每一行 → 画师或整串；带黑名单画师的跳过 */
 function batchUnits(d, text) {
     return M.parseBatchLines(text).filter(u => u.text ? !u.members.some(m => M.banInfo(d, m.tag)) : !M.banInfo(d, u.tag));
@@ -11459,11 +11966,18 @@ function startBatch() {
     const tpls = chosenTemplates('batch');
     if (!tpls.length) { toastr.warning('这条固定提示词已删除或还没有有效英文标签，请在生图页转换并重新保存后再选', '批量生成例图'); return; }
     const jobs = [];
+    // 画谁：选了角色就每串 × 每个角色；没在画师库里的串不自动建，看中了勾选再存
+    const who = ui.batch.who === 'chars' ? (ui.batch.chars || []).map(k => C.getChar(k)).filter(c => c && c.appearance?.length) : [];
+    if (ui.batch.who === 'chars' && !who.length) { toastr.warning('选几个写了外貌的角色，或者改回「模板里的人」', '批量生成例图'); return; }
     for (const u of list) {
-        const ref = findUnit(d, u) || (u.text ? M.createFromString(d, { name: u.name || '', text: u.text, forceGroup: !!u.name }) : { type: 'artist', id: M.ensureArtist(d, u.tag).id });
-        if (!ref) continue;
-        const item = M.resolveTicket(d, ref).item;
-        for (const t of tpls) jobs.push({ ref, templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, skip: ui.batch.skipExisting && item.images.some(i => i.template === t) });
+        const ref = findUnit(d, u);
+        const text = u.text || (Math.abs((u.weight ?? 1) - 1) < 0.001 ? u.tag : `${u.weight}::${u.tag}::`);
+        const item = ref && M.resolveTicket(d, ref)?.item;
+        for (const t of tpls) {
+            const tpl = d.templates[t];
+            if (who.length) for (const c of who) jobs.push({ ref, text, name: u.name || '', templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, char: c.key, charName: c.name, charTags: C.fixedTags(c, { nsfw: !!tpl?.nsfw }), charNeg: c.negative || '', charRef: ui.batch.useRef !== false && c.charRef && d.charRefGroups?.[c.charRef] ? c.charRef : '' });
+            else jobs.push({ ref, text, name: u.name || '', templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, char: '', skip: !!(ui.batch.skipExisting && item?.images.some(i => i.template === t)) });
+        }
     }
     commit();
     const old = ui.batch.state;
@@ -11597,31 +12111,81 @@ function showImg2Prompt(r, from) {
 /** 看图读出的姿势和构图：挑着用，带中文 */
 function showPose(r) {
     const st = ui.studio;
-    const all = [...(r.people || []).map(p => ({ ...p, g: '人数性别' })), ...r.pose.map(p => ({ ...p, g: '姿势' })), ...r.composition.map(p => ({ ...p, g: '构图' })), ...(r.props || []).map(p => ({ ...p, g: '物件' })), ...(r.background || []).map(p => ({ ...p, g: '背景' })), ...(r.nsfw || []).map(p => ({ ...p, g: 'NSFW' }))];
+    const all = [...(r.people || []).map(p => ({ ...p, g: '人数性别' })), ...(r.concept || []).map(p => ({ ...p, g: '特殊构图' })), ...r.pose.map(p => ({ ...p, g: '姿势' })), ...r.composition.map(p => ({ ...p, g: '构图' })), ...(r.props || []).map(p => ({ ...p, g: '物件' })), ...(r.background || []).map(p => ({ ...p, g: '背景' })), ...(r.nsfw || []).map(p => ({ ...p, g: 'NSFW' }))];
     const picked = new Set(all.map((_, i) => i));
+    let note = '', noteBusy = false;
     const box = modal('<div data-pose></div>');
+    box.addEventListener('input', ev => { if (ev.target.matches?.('[data-pose-note]')) note = ev.target.value; });
     const draw = () => {
-        const grp = g => all.map((p, i) => [p, i]).filter(([p]) => p.g === g).map(([p, i]) => `<button class="pc-pair-pick ${picked.has(i) ? 'on' : ''}" data-pi="${i}"><span class="mono">${esc(p.en)}</span>${p.zh ? `<em>${esc(p.zh)}</em>` : ''}</button>`).join('') || '<span class="pc-dim small">没读出来</span>';
+        const grp = g => all.map((p, i) => [p, i]).filter(([p]) => p.g === g).map(([p, i]) => `<button class="pc-pair-pick ${picked.has(i) ? 'on' : ''}" data-pi="${i}" ${noteBusy ? 'disabled' : ''}><span class="mono">${esc(p.en)}</span>${p.zh ? `<em>${esc(p.zh)}</em>` : ''}</button>`).join('') || '<span class="pc-dim small">没读出来</span>';
         box.querySelector('[data-pose]').innerHTML = `<style>.pc-pair-pick{display:inline-flex;align-items:baseline;gap:6px;margin:0 6px 6px 0;padding:6px 11px;border-radius:999px;border:1.5px dashed var(--pc-dash);background:transparent;color:var(--pc-ink);font-family:var(--pc-font);font-size:13px;cursor:pointer}.pc-pair-pick em{font-style:normal;font-size:12px;color:var(--pc-ink-soft)}.pc-pair-pick.on{border-style:solid;border-color:var(--pc-ink);background:var(--pc-paper-2)}</style>
           <h3 class="pc-h3">图里的姿势和构图</h3>${r.look ? `<details class="pc-details"><summary class="pc-dim small">AI 看到的画面（中文）</summary><div class="small" style="line-height:1.7">${esc(r.look)}</div></details>` : ''}<div class="pc-dim small">点标签选上 / 取消，选上的才会用。不想要背景就把「背景」那组点掉。</div>
           ${all.some(p => p.g === '人数性别') ? `<div class="pc-label">人数性别</div><div>${grp('人数性别')}</div>` : ''}
+          ${r.idea || all.some(p => p.g === '特殊构图') ? `<div class="pc-label">特殊构图</div>${r.idea ? `<div class="pc-dim small" style="margin-bottom:6px">${esc(r.idea)}</div>` : ''}<div>${grp('特殊构图')}</div>` : ''}
           <div class="pc-label">姿势</div><div>${grp('姿势')}</div>
           <div class="pc-label">构图</div><div>${grp('构图')}</div>
           ${all.some(p => p.g === '物件') ? `<div class="pc-label">物件</div><div>${grp('物件')}</div>` : ''}
           ${all.some(p => p.g === '背景') ? `<div class="pc-label">背景</div><div>${grp('背景')}</div>` : ''}
           ${all.some(p => p.g === 'NSFW') ? `<div class="pc-label">NSFW（默认选上，不要就点掉）</div><div>${grp('NSFW')}</div>` : ''}
+          <div class="pc-label">我的补充</div>
+          <div class="pc-dim small">AI 读错、读漏的，用一句话告诉它，比如「那只手是镜头前的人的，在捏他下巴」「他在手机屏幕里」。转好的标签放进下面这组，和它对不上的标签会自动取消选。</div>
+          <textarea class="pc-textarea small" data-pose-note placeholder="中文英文都行" style="margin-top:6px">${esc(note)}</textarea>
+          <div class="pc-actions" style="margin-top:6px"><button class="pc-btn" data-pa="note" ${noteBusy ? 'disabled' : ''}>${noteBusy ? '<span class="pc-busy">转换中</span>' : '转成标签加进去'}</button></div>
+          ${all.some(p => p.g === '我的补充') ? `<div style="margin-top:6px">${grp('我的补充')}</div>` : ''}
           <div class="pc-actions wrap">
-            <button class="pc-btn dark" data-pa="pos">接在正面后面</button>
-            <button class="pc-btn" data-pa="scene">换成固定提示词</button>
-            <button class="pc-btn" data-pa="copy">复制</button>
+            <button class="pc-btn dark" data-pa="pos" ${noteBusy ? 'disabled' : ''}>接在正面后面</button>
+            <button class="pc-btn" data-pa="scene" ${noteBusy ? 'disabled' : ''}>换成固定提示词</button>
+            <button class="pc-btn" data-pa="copy" ${noteBusy ? 'disabled' : ''}>复制</button>
             <button class="pc-btn" data-pa="no">算了</button></div>`;
     };
     box.addEventListener('click', async ev => {
         const pi = ev.target.closest('[data-pi]');
+        if (pi && noteBusy) return;
         if (pi) { const i = Number(pi.dataset.pi); picked.has(i) ? picked.delete(i) : picked.add(i); draw(); return; }
         const a = ev.target.closest('[data-pa]')?.dataset.pa;
         if (!a) return;
         if (a === 'no') { box.closeModal(); return; }
+        if (noteBusy) return;
+        if (ui.studio !== st) { toastr.info('生图草稿已切换，请重新打开识图结果', '姿势构图'); box.closeModal(); return; }
+        if (a === 'note') {
+            note = String(box.querySelector('[data-pose-note]')?.value || '').trim();
+            if (!note) { toastr.info('先写一句补充', '我的补充'); return; }
+            if (noteBusy) return;
+            const requestedNote = note;
+            noteBusy = true; draw();
+            try {
+                const cur = all.map((p, i) => [p, i]).filter(([, i]) => picked.has(i)).map(([p]) => p.en).join(', ');
+                const sys = `用户在看一张图的识图结果，觉得 AI 读错或读漏了，写了一句补充。把补充翻成 NovelAI / Danbooru 标签。
+- add：补充里说到的内容，写细：谁、在干什么、在哪、镜头怎么拍。画面外的人的手写 pov、pov hands 和互动标签（hand on another's chin、holding another's wrist 等）；在屏幕 / 取景框里写 viewfinder、phone screen、frame within a frame；大小反差写 size difference、giant、minigirl 等。
+- remove：现有标签里和补充矛盾的，原样写出来（比如补充说手是别人的，就把 chin rest、head on hand、hand on own chin 放进 remove）。没有就 []。
+只用常见的 Danbooru 标签。每个 add 写成 {"en": "英文标签", "zh": "简短中文"}。
+只输出 JSON：{"add": [...], "remove": ["..."]}`;
+                const j = T.pickJson(await T.askLLM(sys, `现有标签：${cur || '（空）'}\n我的补充：${note}`, { maxTokens: 800, fn: 'tr' }));
+                if (!box.isConnected || ui.studio !== st) return;
+                if (note.trim() !== requestedNote) { toastr.info('补充内容改过了，请再点一次转换', '我的补充'); return; }
+                const key = t => String(typeof t === 'object' ? t?.en || '' : t || '').replace(/_/g, ' ').trim().toLowerCase();
+                const rm = new Set((Array.isArray(j?.remove) ? j.remove : []).map(key).filter(Boolean));
+                let off = 0;
+                all.forEach((p, i) => { if (rm.has(key(p)) && picked.has(i)) { picked.delete(i); off++; } });
+                const have = new Map(all.map((p, i) => [key(p), i]));
+                let added = 0;
+                for (const x of Array.isArray(j?.add) ? j.add : []) {
+                    const raw = typeof x === 'string' ? x : x?.en;
+                    const en = typeof raw === 'string' ? raw.trim() : '', zh = typeof x?.zh === 'string' ? x.zh.trim() : '';
+                    if (!en || T.hasChinese(en) || rm.has(key(en))) continue;
+                    if (have.has(key(en))) { picked.add(have.get(key(en))); continue; }
+                    all.push({ en, zh, g: '我的补充' }); picked.add(all.length - 1); have.set(key(en), all.length - 1); added++;
+                }
+                // 补充排在最前面，优先排列；不修改标签权重
+                const order = all.map((p, i) => [p, i]).sort(([a], [b]) => (b.g === '我的补充') - (a.g === '我的补充'));
+                const was = new Set([...picked].map(i => all[i]));
+                all.splice(0, all.length, ...order.map(([p]) => p));
+                picked.clear(); all.forEach((p, i) => { if (was.has(p)) picked.add(i); });
+                toastr.success(`加了 ${added} 个${off ? `，取消了 ${off} 个对不上的` : ''}`, '我的补充', { timeOut: 2200 });
+            } catch (e) { if (box.isConnected && ui.studio === st && e?.name !== 'AbortError') toastr.error('转换失败：' + e.message, '我的补充'); }
+            finally { noteBusy = false; if (box.isConnected) draw(); }
+            return;
+        }
         const tags = all.filter((_, i) => picked.has(i)).map(p => p.en).join(', ');
         if (!tags) { toastr.info('一个都没选', '姿势构图'); return; }
         if (a === 'copy') { try { await navigator.clipboard.writeText(tags); toastr.success('复制好了', '姿势构图', { timeOut: 1200 }); } catch { toastr.info(tags, '复制不了，自己长按复制'); } return; }
@@ -11737,8 +12301,40 @@ function viewAiPreset(d) {
       </section>
       <div style="height:24px"></div>`;
 }
+/** 分享画师串时一起带上的出图参数；画师串绑了模型就用绑的 */
+function shareParams(ref) {
+    const s = N.settings(), d = getData();
+    const item = ref ? M.resolveTicket(d, ref)?.item : null;
+    if (s.naiMode === 'gpt') return item?.model ? { model: item.model } : {};
+    const n = v => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : undefined;
+    return { model: item?.model || s.novelaimode || undefined, sampler: s.novelai_sampler || undefined, steps: n(s.novelai_steps), cfg: n(s.nai3Scale), rescale: Number(s.cfg_rescale) || 0, schedule: s.Schedule || undefined, width: n(s.novelai_width), height: n(s.novelai_height) };
+}
+const shareModelName = v => (N.MODELS.find(m => m[0] === v) || [v, v])[1];
+function shareImageParams(image = {}) {
+    if (image.params && typeof image.params === 'object') return { ...image.params };
+    const size = /^(\d+)×(\d+)$/.exec(image.size || '');
+    return { ...(image.model ? { model: image.model } : {}), ...(size ? { width: Number(size[1]), height: Number(size[2]) } : {}) };
+}
+function shareParamsLine(pr) {
+    if (!pr || typeof pr !== 'object' || !pr.model) return '';
+    return [shareModelName(pr.model), pr.sampler, pr.steps && pr.steps + ' 步', pr.cfg && 'CFG ' + pr.cfg, pr.rescale ? 'Rescale ' + pr.rescale : '', pr.width && pr.height ? pr.width + '×' + pr.height : ''].filter(Boolean).join(' · ');
+}
+/** 把分享里的参数套到自己的设置上（只认识的模型才换） */
+function applyShareParams(pr) {
+    if (!pr || typeof pr !== 'object' || /^(?:ComfyUI|OpenAI 兼容) ·/.test(pr.model || '')) return false;
+    const s = N.settings(), positive = v => Number.isFinite(Number(v)) && Number(v) > 0;
+    if (pr.model && N.MODELS.some(m => m[0] === pr.model)) s.novelaimode = pr.model;
+    if (typeof pr.sampler === 'string' && pr.sampler) s.novelai_sampler = pr.sampler;
+    if (positive(pr.steps)) s.novelai_steps = Number(pr.steps);
+    if (positive(pr.cfg)) s.nai3Scale = Number(pr.cfg);
+    if (pr.rescale != null && Number.isFinite(Number(pr.rescale)) && Number(pr.rescale) >= 0) s.cfg_rescale = Number(pr.rescale);
+    if (typeof pr.schedule === 'string' && pr.schedule) s.Schedule = pr.schedule;
+    if (positive(pr.width) && positive(pr.height)) { s.novelai_width = Number(pr.width); s.novelai_height = Number(pr.height); }
+    N.save(); return true;
+}
 function openSharedUpload(pre = {}) {
     const d = getData();
+    const uploadParams = pre.params ? { ...pre.params } : shareParams();
     const box = modal(`<form data-share-form>
       <h3 class="pc-h3">上传画师串</h3>
       <label class="pc-field"><span>名称</span><input class="pc-input" name="title" maxlength="200" placeholder="不填就用前两位画师的名字" value="${esc(pre.title || '')}"></label>
@@ -11873,7 +12469,7 @@ function openSharedUpload(pre = {}) {
                 images.push({ data, nsfw });
             }
             say('正在发布…');
-            const post = { nickname, name, kind: members.length === 1 ? 'artist' : 'group', note, tags, nsfw, content: { artistString, members, ...(negative ? { negative } : {}) }, images };
+            const post = { nickname, name, kind: members.length === 1 ? 'artist' : 'group', note, tags, nsfw, content: { artistString, members, ...(negative ? { negative } : {}), params: uploadParams }, images };
             await L.createPost(post);
             d.lobby.nickname = nickname;
             if (nsfw && lobbyNsfwMode() === 'sfw') { d.options.lobbyShowNsfw = true; d.options.lobbyNsfwMode = 'all'; }
@@ -11955,7 +12551,7 @@ async function shareToLobby(ref) {
         kind: ref.type, name: form.name || M.ticketName(d, ref), note: form.note,
         tags: picked,
         nsfw: images.some(i => i.nsfw),
-        content: { artistString: artistOnly(M.ticketString(d, ref)), members, ...(M.ticketNeg(d, ref) ? { negative: M.ticketNeg(d, ref) } : {}) },
+        content: { artistString: artistOnly(M.ticketString(d, ref)), members, ...(M.ticketNeg(d, ref) ? { negative: M.ticketNeg(d, ref) } : {}), params: shareParams(ref) },
         images,
     });
     toastr.success('已分享', '共享');
@@ -11969,12 +12565,14 @@ async function copyFromLobby(p, btn) {
         await copyCharacterFromLobby(p);
     } else {
         let ref;
-        if ((p.kind === 'artist' || p.content?.members?.length === 1) && !p.content?.negative && !M.parseArtistString(p.content?.artistString || '').extra && (p.content?.members?.[0]?.weight ?? 1) === 1) {
+        if ((p.kind === 'artist' || p.content?.members?.length === 1) && !p.content?.negative && !p.content?.params?.model && !M.parseArtistString(p.content?.artistString || '').extra && (p.content?.members?.[0]?.weight ?? 1) === 1) {
             const a = M.ensureArtist(d, p.content.members?.[0]?.tag || p.content.artistString);
             if (p.note && !a.note) a.note = p.note;
             ref = { type: 'artist', id: a.id };
         } else {
             ref = M.createFromString(d, { name: p.name, text: p.content.artistString, note: p.note, neg: p.content.negative || '', forceGroup: true });
+            const pr = p.content?.params;
+            if (ref && pr && typeof pr === 'object') { const it = M.resolveTicket(d, ref)?.item; if (it) { if (pr.model && N.MODELS.some(m => m[0] === pr.model) && !it.model) it.model = pr.model; it.shareParams = pr; } }
         }
         if (!ref) throw new Error('这一条里没有画师');
         for (const img of p.images) {

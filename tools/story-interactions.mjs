@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
+import { NAI_STORY_GUIDANCE } from '../src/illustration-plans.js';
 
 export function applyStoryInteractions(source) {
+    // 楼层手动生图走旧 scene 入口，也使用同一份 NAI 画面规则。
+    const legacy = '规则：只用常见 Danbooru 英文标签；不写画师，不写质量词，不写长相；x、y 是角色在画面里的大概位置。';
+    assert.equal(source.split(legacy).length, 2, '手动画面提示词入口');
+    source = source.replace(legacy, () => NAI_STORY_GUIDANCE + '\nscene 可包含英文场景关系句，characters[].tags 可包含该人物的简短动作说明。保持上述 JSON 字段，x、y 是人物的大概位置。');
     const start = source.indexOf('function buildChatPrompt(scene, picks, { nsfw = hasNsfwRating(scene) } = {}) {');
     const end = source.indexOf('/** 名字和别名', start);
     assert(start >= 0 && end > start, '剧情互动合并入口');

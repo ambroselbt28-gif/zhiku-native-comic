@@ -71,21 +71,47 @@ sharp gaze、cold gaze、watching calmly 描述神态，还需给出具体视线
 例二为一人递书，另一人接书。前者 action=offering book、hands=right hand holding book，后者 action=reaching for book、hands=left hand reaching toward book，场景写 book between them。根据原文决定各自看书还是看对方。
 输出前检查人物身份、动作对象、视线对象、可见双手、身体姿势、距离与画面位置是否相容。`;
 
-export const DEFAULT_ILLUSTRATION_PROMPT = ILLUSTRATION_PROMPT_BASE
+const LEGACY_INTERACTION_PROMPT = ILLUSTRATION_PROMPT_BASE
     .replace('【输出格式】', INTERACTION_GUIDANCE + '\n\n【输出格式】')
     .replace('gaze（视线）、outfit', 'gaze（视线）、gaze_target（视线对象）、body_direction（身体朝向）、head_direction（头部朝向）、hands（可见手部动作）、interaction_role（互动标签）、outfit')
     .replace('每个标签都写成 danbooru 风格的短标签（1 到 4 个词），不要写成整句或长短语：写 hand over mouth、covering mouth、hug from behind、tail around waist、whispering，不写 mouth and nose covered by boy\'s large hand、whispering near her ear 这类句子。', '优先使用 danbooru 风格的短标签，必要时加简短英文说明，明确谁对谁做什么和具体接触位置。');
+
+// 依据 NovelAI V5 专用技能与官方字段规则重新编写，供两个正文选镜入口共用。
+export const NAI_STORY_GUIDANCE = `【NovelAI V5 画面表达】
+用常见英文标签锁定人物动作、物件和机位，用一到两句简短英文说明标签无法说清的空间关系、动作对象和遮挡。自然语言是画面说明，不冒充已验证的 Danbooru 标签。优先表达这一瞬间的核心动作和人物反应，删掉重复、互斥或与画面无关的词。
+场景段负责地点、机位、光线和人物之间的关系。每个人自己的动作、视线、持物、服装放在自己的角色段。固定发型、发色、眼睛、年龄感和体型由角色库提供，不为增加细节而重新设计，也不因为忧郁、疲倦就擅自添加伤疤、胡茬、脏污或衰老特征。
+多人关系用明确对象写清谁对谁做什么，例如 The man on the left offers a cup to the seated woman. 每个人只补自己的动作。source#、target#、mutual# 可辅助绑定同一个互动，仍需明确对象。不要让每个人都复制同一套动作。
+每人的视线要有实际目标，looking at another 需对应画面中的对象，交谈并不强制双方始终对视。看手机、看窗外、看对方、闭眼按正文分别处理。只有正文明确面对观看者、自拍或合影时才用 looking at viewer。
+检查动作发生阶段和受力。伸手去拿与已经握住选一刻，坐姿有承重座面，倚靠有支撑物，每只可见的手只承担相容的动作。不要让双方隔着桌子却贴身拥抱，不要补写裁切外的手指或背面看不见的眼睛。
+按关键动作选一种景别和一种主机位。双人递物要留出双方的手与道具，情绪重点可用近景，交代环境才用远景。同一张不堆 close-up、full body、wide shot；侧脸、三分之四和背面也只选符合正文的一种，不为好看而把人物强行转向镜头。
+背景保留正文中的地点与少量关键大物件，形成明确前后关系。光线说明来源、方向及照到的物体，例如窗光落在脸侧、壁炉光映在衣褶。需要细节时写可见的头发层次、布料褶皱、玻璃反光等具体内容，不机械堆 detailed、8k 或添加 film grain、noise、sketch 等画风词。
+保留当前画师串与用户风格。不要自行生成 artist:、质量词、负面词、采样参数、A1111 权重或整串高权重。high complexity、ultra complexity、depthness、fur dataset、background dataset 都不是通用画质前缀，不自动添加。实际画师、质量和负面由插件配置合并。
+位置描述应与角色顺序及坐标相容，近景被遮挡的人不能同时写成无遮挡全身。输出前检查人数、外貌归属、动作对象、视线、手与道具、景别、光源是否一致。只输出最终画面，不输出推理过程。`;
+
+const STORY_COUNT_RULE = '必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。围绕已有剧情选择不同瞬间、人物反应或景别；同一事件可补充不改变剧情的观察角度，不编造新人物、新事件或未发生的结果。';
+const LEGACY_COUNT_RULE = ILLUSTRATION_PROMPT_BASE.split('\n')[3];
+
+export const DEFAULT_ILLUSTRATION_PROMPT = LEGACY_INTERACTION_PROMPT
+    .replace(LEGACY_COUNT_RULE, STORY_COUNT_RULE)
+    .replace('你负责根据小说正文选择插图瞬间，并整理画面信息。', '你负责把小说中的可见瞬间转为 NovelAI V5 插图方案，兼容标签与简短英文画面说明。')
+    .replace('每个入画人物分别填写：身体姿势、朝向和重心；肢体动作、双手位置和物品；表情、视线和头部朝向；衣着状态；画面位置和前后层次。', '每个入画人物填写当前镜头可见且有意义的姿势、动作、表情、视线、服装和位置；可选细节无依据或不可见时留空，不为了填满字段增加动作。')
+    .replace('整体构图填写：景别（特写到远景）、机位（平视、俯视、仰视、正侧背面）、主体位置、视觉重点、留白、前后层次、地点、关键物品、时间、光线和氛围。', '整体构图围绕一个视觉重点，选择匹配的景别、机位和前后层次，并写出有来源的光线与必要的环境细节。')
+    .replace('【输出格式】', NAI_STORY_GUIDANCE + '\n\n【输出格式】')
+    .replace('scene：英文环境、地点和关键物品标签。', 'scene：英文环境、地点和关键物品标签。\nscene_description：一到两句简短英文，补充本图最关键的可见空间或互动关系，不重复外貌；无需补充时为 ""。')
+    .replace('action（动作）、expression', 'action（动作标签）、action_description（可选简短英文句子，说明该人物动作对象和持物归属）、expression')
+    .replace('不得把人物标签合并到场景段。', '场景的简短英文关系说明放在 Scene Composition 段末尾，个人的英文动作说明放在对应 Character Prompt 段内。句子不要包含换行、分号、竖线或协议标题。不得把人物标签合并到场景段。');
 
 export function illustrationPrompt(options = {}) {
     const p = typeof options.illustPrompt === 'string' ? options.illustPrompt : '';
     if (!p.trim()) return DEFAULT_ILLUSTRATION_PROMPT;
     const comparable = p.replace(/\r\n/g, '\n');
     // 仅升级完整匹配的旧默认文本，玩家编辑过的文本继续原样读取。
-    if (comparable === ILLUSTRATION_PROMPT_BASE) return DEFAULT_ILLUSTRATION_PROMPT;
-    const oldCountRules = ['遵循输入 imageLimit（玩家设置的最多张数），不自行固定张数。', '按输入 imageLimit 写满张数：正文够长就写满 imageLimit 张，分散在正文前中后不同位置；只有正文太短、实在找不出这么多不同瞬间时才少写。'];
-    for (const line of oldCountRules) {
-        const upgraded = comparable.replace(line, '必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。正文里的瞬间不够时自己编：同一场景换景别和角度（特写、背影、俯拍）、写在场人物的反应、补正文没细写但合理的前后一刻，直到写满为止，不能少写。');
-        if (upgraded === ILLUSTRATION_PROMPT_BASE || upgraded === DEFAULT_ILLUSTRATION_PROMPT) return DEFAULT_ILLUSTRATION_PROMPT;
+    const defaults = [ILLUSTRATION_PROMPT_BASE, LEGACY_INTERACTION_PROMPT, DEFAULT_ILLUSTRATION_PROMPT];
+    const countRules = [LEGACY_COUNT_RULE, STORY_COUNT_RULE, '遵循输入 imageLimit（玩家设置的最多张数），不自行固定张数。', '按输入 imageLimit 写满张数：正文够长就写满 imageLimit 张，分散在正文前中后不同位置；只有正文太短、实在找不出这么多不同瞬间时才少写。'];
+    for (const template of defaults) {
+        for (const line of countRules) {
+            if (comparable === template.replace(template.split('\n')[3], line)) return DEFAULT_ILLUSTRATION_PROMPT;
+        }
     }
     return p;
 }
@@ -136,6 +162,12 @@ export function compileIllustrationPlan(plan, roster, story) {
         // Count and rating are compiled once, from structured fields.
         return value.split(/[,;]+/).map(s => s.trim()).filter(s => s && !/^(?:\d+(?:boys?|girls?|others?)|solo|no humans|sfw|nsfw)$/i.test(s)).join(', ');
     };
+    // 自然语言保留完整句子；禁止串入标记协议，避免改变人物归属。
+    const narrative = value => {
+        if (value == null || value === '') return '';
+        if (typeof value !== 'string' || /[㐀-鿿豈-﫿$<>|;\r\n]|(?:Scene Composition|Character\s+\d+\s+(?:Prompt|UC))\s*:/i.test(value)) throw new Error('画面说明需要单行英文，不能包含人物标记或协议分隔符');
+        return value.trim();
+    };
     const composition = plan.composition;
     if (!composition || typeof composition !== 'object') throw new Error('画面方案缺少镜头构图 composition');
     for (const field of ['shot', 'camera', 'layout', 'lighting']) if (!clean(composition[field])) throw new Error(`镜头构图缺少 ${field}`);
@@ -163,10 +195,10 @@ export function compileIllustrationPlan(plan, roster, story) {
         const targetTag = gazeTarget && !/\beyes closed\b/i.test(gaze.replace(/_/g, ' ')) && !gaze.toLowerCase().includes('looking at ' + gazeTarget.toLowerCase()) ? 'looking at ' + gazeTarget : '';
         const tags = [person.registered ? '' : person.appearance, person.pose, person.body_direction, person.action, person.hands, person.interaction_role, person.expression, gaze, targetTag, person.head_direction,
             char.outfitMode === 'fixed' ? '' : person.outfit, pos.x<0.4?'on left':pos.x>0.6?'on right':'centered', pos.depth, person.tags].map(clean).filter(Boolean).join(', ');
-        picks.push({ char, tags, x:pos.x, y:pos.y });
+        picks.push({ char, tags: [tags, narrative(person.action_description)].filter(Boolean).join(', '), x:pos.x, y:pos.y });
     }
     const count = picks.length ? Object.entries(counts).filter(([,n])=>n).map(([g,n])=>`${n}${g}${n>1?'s':''}`).join(', ') : 'no humans';
-    const scene = [rating, count, clean(required('scene')), ...['shot','camera','layout','lighting'].map(k=>clean(composition[k])), clean(plan.interaction)].filter(Boolean).join(', ');
+    const scene = [rating, count, clean(required('scene')), ...['shot','camera','layout','lighting'].map(k=>clean(composition[k])), clean(plan.interaction), narrative(plan.scene_description)].filter(Boolean).join(', ');
     return { scene, picks, cast, summary:{source,title,moment,rating} };
 }
 
