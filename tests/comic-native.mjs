@@ -125,6 +125,7 @@ assert.equal(sent.action, 'generate');
 assert.equal(sent.parameters.v4_prompt.caption.char_captions.length, 8);
 assert.equal(sent.parameters.v4_negative_prompt.caption.char_captions.length, 8);
 assert.equal(sent.parameters.v4_prompt.caption.char_captions[7].centers[0].x, 0.68);
+assert.equal(sent.parameters.v4_prompt.use_coords, true);
 assert(sent.parameters.v4_prompt.caption.char_captions[7].char_caption.endsWith('Text: 「第 8 格。」'));
 assert(logs.some(entry => entry[0] === '漫画请求' && entry[2].includes('第 8 格')));
 assert(!JSON.stringify(logs).includes('fixture-private-key'));
@@ -141,6 +142,7 @@ await nai.generate({ positive: 'ordinary illustration', chars });
 sent = requests.at(-1).body;
 assert.equal(sent.model, 'nai-diffusion-4-5-full');
 assert.equal(sent.parameters.v4_prompt.caption.char_captions.length, 6);
+assert.equal(sent.parameters.v4_prompt.use_coords, false);
 nai.stopQueue();
 console.log('PASS 正式发布入口 → NAI5 请求体、8 人物保留、坐标、诊断、重试与普通插图兼容');
 

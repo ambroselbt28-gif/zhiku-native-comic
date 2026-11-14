@@ -1,3 +1,4 @@
+import {applySiteCompatibility} from './site-compat.mjs';
 import {applyNaiRequestCompatibility} from './nai-request-compat.mjs';
 import {applyAiBudgetCompatibility} from './ai-budget-compat.mjs';
 import {applyImageChannelCompatibility} from './image-channel-compat.mjs';
@@ -26,8 +27,8 @@ process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 const dir='.';
 let s=applyMarkers(JSON.parse(fs.readFileSync('zhiku.script.json','utf8')).content);
 function patch(a,b){assert.equal(s.split(a).length,2,a.slice(0,80));s=s.replace(a,()=>b);}
-patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.47-native.1';");
-patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.47-native.1');
+patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.54-native.1';");
+patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.54-native.1');
 patch('    const run = () => {\n        saving = saving.then(writeNow)', '    const run = () => {\n        saveTimer = null;\n        saving = saving.then(writeNow)');
 patch('return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl };', 'return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl, flush: () => saveTimer !== null ? commit({ immediate: true, silent: true }) : saving };');
 // Preserve nested API error messages and object details in both response paths.
@@ -4917,6 +4918,47 @@ s=applyNaiRequestCompatibility(s);
 patch('        void globalThis.__zhikuComic?.adapt(id);', `        const controller = globalThis.__zhikuComic;
         if (!controller) { toastr.warning('漫画模块尚未就绪，请刷新智库后再试', '智库 · 漫画'); return; }
         void controller.adapt(id).catch(error => toastr.error(error?.message || String(error), '智库 · 漫画'));`);
+// 0.8.51：存下的固定提示词能修改：名字、内容、标签在一个框里改（点内容也能打开），正在用的跟着换
+patch('点每条的「标签」可以分类，比如 证件照、NSFW、双人', '点每条的「修改」可以编辑内容和标签，比如 证件照、NSFW、双人');
+patch(`<small class="mono">\${esc(p.scene)}</small></div>`,`<small class="mono" \${kind === 'saved' ? \`data-act="sceneedit" data-i="\${i}" style="cursor:pointer" title="点一下修改"\` : ''}>\${esc(p.scene)}</small></div>`);
+patch(`\`<button class="pc-pill tiny dashed" data-act="scenerename" data-i="\${i}">改名</button><button class="pc-pill tiny dashed" data-act="scenetags" data-i="\${i}">标签</button>\`}`,`\`<button class="pc-pill tiny dashed" data-act="sceneedit" data-i="\${i}">修改</button>\`}`);
+patch(`            case 'scenerename': {`,`            case 'sceneedit': {
+                const st = ui.studio, p = st.scenes?.[Number(el.dataset.i)];
+                if (!p) break;
+                const oldSig = sceneSig(p), wasCur = oldSig === sceneSig(sceneSnapshot());
+                const had = [...new Set((st.scenes || []).flatMap(x => x.tags || []))];
+                const box = modal(\`<h3 class="pc-h3">修改固定提示词</h3>
+                  <label class="pc-label">名字</label><input class="pc-input" data-f="name" value="\${esc(p.name || '')}" placeholder="没起名">
+                  <label class="pc-label">内容（英文标签，会发出去）</label><textarea class="pc-textarea mono" data-f="scene" style="min-height:150px">\${esc(p.scene || '')}</textarea>
+                  <label class="pc-label">标签（逗号隔开）\${had.length ? \`<span class="pc-dim small"> · 已有：\${esc(had.join('、'))}</span>\` : ''}</label><input class="pc-input" data-f="tags" value="\${esc((p.tags || []).join('，'))}" placeholder="比如 证件照，NSFW，双人">
+                  \${wasCur ? '<div class="pc-hint">这一条正在用，改完框里的固定提示词也跟着换。</div>' : ''}
+                  <div class="pc-actions"><button class="pc-btn" data-m="no">算了</button><button class="pc-btn dark" data-m="ok">保存</button></div>\`);
+                box.addEventListener('click', ev => {
+                    const m = ev.target.closest('[data-m]')?.dataset.m;
+                    if (m === 'no') box.closeModal();
+                    if (m !== 'ok') return;
+                    if (ui.studio !== st || !st.scenes?.includes(p)) { toastr.warning('这条固定提示词已变化，请重新打开', '固定提示词'); box.closeModal(); return; }
+                    const f = k => box.querySelector(\`[data-f="\${k}"]\`).value;
+                    const scene = f('scene').trim();
+                    if (!scene) { toastr.warning('内容不能是空的，不要了就点 × 删掉', '固定提示词'); return; }
+                    p.name = f('name').trim() || p.name || sceneName(scene);
+                    if (scene !== p.scene) { p.scene = scene; p.sceneEn = ''; p.sceneSrc = ''; }
+                    p.tags = [...new Set(f('tags').split(/[,，、;；\\n]+/).map(x => x.trim()).filter(Boolean))].slice(0, 8);
+                    if (ui.batch?.sceneSig === oldSig) ui.batch.sceneSig = sceneSig(p);
+                    if (wasCur && sceneSig(sceneSnapshot()) === oldSig) { const enabled=st.sceneOn; applyScene(p); st.sceneOn=enabled; }
+                    saveStudio(); box.closeModal(); render();
+                    toastr.success('改好了', '固定提示词', { timeOut: 1200 });
+                });
+                break;
+            }
+            case 'scenerename': {`);
+
+s=applySiteCompatibility(s);
+patch('body=>{try{naiSent=naiRequestSnapshot(body);}catch{}},responseInfo);', `body=>{try{
+            naiSent=naiRequestSnapshot(body);
+            if(opts.comic)globalThis.__zkLog?.('漫画请求',body.model+' · 原生整页 · '+(body.parameters?.v4_prompt?.caption?.char_captions?.length||0)+' 条人物提示',JSON.stringify(naiSent,null,1));
+        }catch{}},responseInfo);`);
+patch("if(s.naiMode==='site'){p.use_coords=false;p.v4_prompt.use_coords=false;}", "if(s.naiMode==='site'&&!comic){p.use_coords=false;p.v4_prompt.use_coords=false;}");
 const prefix=`// 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
 export function createRuntime() {
 let stopped = false;
@@ -4930,9 +4972,9 @@ function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
 `;
 fs.writeFileSync(dir+'/runtime.js',(prefix+s+'\n}\n').replace(/\r\n/g, '\n'));
 fs.copyFileSync('src/index.js',dir+'/index.js');
-fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.47-native.1',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
-fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.47-native.1',private:true,type:'module'},null,2)+'\n');
+fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.54-native.1',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
+fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.54-native.1',private:true,type:'module'},null,2)+'\n');
 fs.writeFileSync(dir+'/capability-contract.json',JSON.stringify({schemaVersion:1,minimum:{sillytavern:'1.14.0',tavernHelper:null},requirements:[{id:'host-context',owner:'sillytavern',symbol:'SillyTavern.getContext',required:true,fallback:null}]},null,2));
 assert(!s.includes('getButtonEvent('));
 for(const key of ['piaoce_data.json','piaoce_nai','piaoce_uid','data-share-form'])assert(s.includes(key));
-console.log('智库 NAI5 原生漫画二改 0.8.47-native.1 构建完成。');
+console.log('智库 NAI5 原生漫画二改 0.8.54-native.1 构建完成。');
