@@ -15,10 +15,12 @@ const controller = runtime.slice(runtime.indexOf('const COMIC_BLOCK'), runtime.i
 const clickHandler = runtime.slice(runtime.indexOf('function onChatClick(ev)'), runtime.indexOf('function addMenuButton()'));
 const backfill = runtime.slice(runtime.indexOf('// 只调度当前聊天'), runtime.indexOf('const COMIC_BLOCK'));
 const characters = fs.readFileSync(path.join(root, 'src/image-characters.js'), 'utf8').replace(/^export /gm, '');
+const illustration = runtime.slice(runtime.indexOf('// The entire editable instruction'), runtime.indexOf('function createIllustrationPlanner'));
+const illustrationEditor = runtime.slice(runtime.indexOf('function renderIllustrationEditor'), runtime.indexOf('function selectionTextMap'));
 const backfillAction = runtime.slice(runtime.indexOf("case 'image-backfill':"), runtime.indexOf("case 'comicbook':", runtime.indexOf("case 'image-backfill':")));
-const module = characters + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
+const module = characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
     + '\nfunction onBackfillClick(ev) { const ui = {view:"comic"}; switch(ev.target.dataset.act) {' + backfillAction + '} }'
-    + '\nexport { createComicController, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick };';
+    + '\nexport { createComicController, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor };';
 const html = fs.readFileSync(path.join(root, 'dev/comic-browser.html'), 'utf8');
 const server = http.createServer((request, response) => {
     const isModule = request.url === '/runtime-comic.js';
@@ -38,7 +40,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 24) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 28) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

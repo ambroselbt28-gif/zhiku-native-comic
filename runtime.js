@@ -1341,7 +1341,7 @@ function createComicController(deps) {
 
 
 // The entire editable instruction lives here; request assembly adds data, not hidden rules.
-const DEFAULT_ILLUSTRATION_PROMPT = `你负责根据小说正文选择插图瞬间，并整理画面信息。
+const ILLUSTRATION_PROMPT_BASE = `你负责根据小说正文选择插图瞬间，并整理画面信息。
 
 【图片数量】
 必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。正文里的瞬间不够时自己编：同一场景换景别和角度（特写、背影、俯拍）、写在场人物的反应、补正文没细写但合理的前后一刻，直到写满为止，不能少写。
@@ -1396,11 +1396,37 @@ name（名字）、registered（是否调用候选角色，布尔值）、gender
 只有 name、source、title、moment 可以用中文，其余画面标签用英文。
 characters 只列实际可见的人；人数标签由插件根据名单生成，scene 和各人物标签不另写人数。`;
 
+const INTERACTION_GUIDANCE = `【视线与互动姿势】
+候选资料里的固定视线与姿势要根据本次剧情重新判断，外貌、身份和服装规则继续沿用角色资料。
+每人明确看向的对象和方向，分别填写 gaze 与 gaze_target。gaze_target 用英文物品名或人物的可见特征，例如 smartphone、seated man、person on left。眼睛闭合、背对镜头或面部不可见时按可见状态填写，目标可为空。
+sharp gaze、cold gaze、watching calmly 描述神态，还需给出具体视线对象。人物拿手机时根据正文判断看手机还是看别人，观察他人时指出被观察的人。
+按剧情选择各自的注意力目标。交谈或相互注视时可使用 looking at another、eye contact，其他瞬间可以看物品、看向别处或闭眼。looking at viewer 用于原文明确面对观看者、自拍或合影的镜头。
+人物的身体朝向、头部朝向和视线分别描述。根据机位、左右站位和前后距离检查三者是否一致，避免一律正面站直、并排看镜头。
+每个动作明确发起者、对象、接触部位和这一瞬间的受力姿势。递物写清谁递、谁接和物品所在位置，扶肩写清哪只手接触谁的肩膀，拉手写清双方的手与身体朝向。
+手部只写镜头中可见的必要状态，检查同一只手没有同时拿两件物品或执行互斥动作。身体接触须与距离、遮挡和坐站姿势相容，前后相继的动作选其中一刻。
+互动动作可以使用 source#、target#、mutual# 说明双方角色，例如主动伸手拥抱者用 source#hug、被拥抱者用 target#hug，相互拥抱时双方用 mutual#hug。双方动作与对象以正文为依据。
+每个人可补充 body_direction（身体朝向）、head_direction（头部朝向）、hands（可见手部动作）、interaction_role（互动标签），均为英文字符串。旧格式中的 pose、action、gaze 字段继续填写。
+短标签难以表达动作关系时，可补一句简短英文说明接触对象和动作归属，场景段概括关系，各人物段保留各自的动作。
+例一为拿手机者坐在前景，另一人站在后方观察。前者 gaze=looking down、gaze_target=smartphone、hands=right hand reaching for smartphone，后者 gaze=looking at another、gaze_target=seated man。根据正文分别设置身体和头部方向。
+例二为一人递书，另一人接书。前者 action=offering book、hands=right hand holding book，后者 action=reaching for book、hands=left hand reaching toward book，场景写 book between them。根据原文决定各自看书还是看对方。
+输出前检查人物身份、动作对象、视线对象、可见双手、身体姿势、距离与画面位置是否相容。`;
+
+const DEFAULT_ILLUSTRATION_PROMPT = ILLUSTRATION_PROMPT_BASE
+    .replace('【输出格式】', INTERACTION_GUIDANCE + '\n\n【输出格式】')
+    .replace('gaze（视线）、outfit', 'gaze（视线）、gaze_target（视线对象）、body_direction（身体朝向）、head_direction（头部朝向）、hands（可见手部动作）、interaction_role（互动标签）、outfit')
+    .replace('每个标签都写成 danbooru 风格的短标签（1 到 4 个词），不要写成整句或长短语：写 hand over mouth、covering mouth、hug from behind、tail around waist、whispering，不写 mouth and nose covered by boy\'s large hand、whispering near her ear 这类句子。', '优先使用 danbooru 风格的短标签，必要时加简短英文说明，明确谁对谁做什么和具体接触位置。');
+
 function illustrationPrompt(options = {}) {
     const p = typeof options.illustPrompt === 'string' ? options.illustPrompt : '';
     if (!p.trim()) return DEFAULT_ILLUSTRATION_PROMPT;
-    // 存下来的是旧版默认提示词（玩家没改过）：换成新的「写满张数」
-    for (const line of ['遵循输入 imageLimit（玩家设置的最多张数），不自行固定张数。', '按输入 imageLimit 写满张数：正文够长就写满 imageLimit 张，分散在正文前中后不同位置；只有正文太短、实在找不出这么多不同瞬间时才少写。']) if (p.includes(line) && p.replace(line, '必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。正文里的瞬间不够时自己编：同一场景换景别和角度（特写、背影、俯拍）、写在场人物的反应、补正文没细写但合理的前后一刻，直到写满为止，不能少写。') === DEFAULT_ILLUSTRATION_PROMPT) return DEFAULT_ILLUSTRATION_PROMPT;
+    const comparable = p.replace(/\r\n/g, '\n');
+    // 仅升级完整匹配的旧默认文本，玩家编辑过的文本继续原样读取。
+    if (comparable === ILLUSTRATION_PROMPT_BASE) return DEFAULT_ILLUSTRATION_PROMPT;
+    const oldCountRules = ['遵循输入 imageLimit（玩家设置的最多张数），不自行固定张数。', '按输入 imageLimit 写满张数：正文够长就写满 imageLimit 张，分散在正文前中后不同位置；只有正文太短、实在找不出这么多不同瞬间时才少写。'];
+    for (const line of oldCountRules) {
+        const upgraded = comparable.replace(line, '必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。正文里的瞬间不够时自己编：同一场景换景别和角度（特写、背影、俯拍）、写在场人物的反应、补正文没细写但合理的前后一刻，直到写满为止，不能少写。');
+        if (upgraded === ILLUSTRATION_PROMPT_BASE || upgraded === DEFAULT_ILLUSTRATION_PROMPT) return DEFAULT_ILLUSTRATION_PROMPT;
+    }
     return p;
 }
 
@@ -1470,7 +1496,10 @@ function compileIllustrationPlan(plan, roster, story) {
         // 站位缺了或写错就用默认的，不为这个卡住出图
         const raw = person.position || {}, ok = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
         const pos = { x: ok(raw.x) ? raw.x : (picks.length + 1) / (plan.characters.length + 1), y: ok(raw.y) ? raw.y : 0.5, depth: ['foreground','midground','background'].includes(raw.depth) ? raw.depth : '' };
-        const tags = [person.registered ? '' : person.appearance, person.pose, person.action, person.expression, person.gaze,
+        const gazeTarget = clean(person.gaze_target);
+        const gaze = clean(person.gaze);
+        const targetTag = gazeTarget && !/\beyes closed\b/i.test(gaze.replace(/_/g, ' ')) && !gaze.toLowerCase().includes('looking at ' + gazeTarget.toLowerCase()) ? 'looking at ' + gazeTarget : '';
+        const tags = [person.registered ? '' : person.appearance, person.pose, person.body_direction, person.action, person.hands, person.interaction_role, person.expression, gaze, targetTag, person.head_direction,
             char.outfitMode === 'fixed' ? '' : person.outfit, pos.x<0.4?'on left':pos.x>0.6?'on right':'centered', pos.depth, person.tags].map(clean).filter(Boolean).join(', ');
         picks.push({ char, tags, x:pos.x, y:pos.y });
     }
@@ -1608,7 +1637,7 @@ function renderIllustrationEditor(options, draft, hasRequest, esc) {
       <style>.pc-illust-editor textarea,.pc-illust-request{scrollbar-width:none;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}.pc-illust-editor textarea::-webkit-scrollbar,.pc-illust-request::-webkit-scrollbar{display:none}.pc-illust-editor textarea{min-height:240px;width:100%;box-sizing:border-box}.pc-illust-request{max-height:65vh;font-size:14px;line-height:1.6}</style>
       <label class="pc-field"><span>正文转生图提示词 · SFW / NSFW 共用</span><textarea class="pc-textarea" data-bind="illustPromptDraft" rows="10">${esc(draft ?? illustrationPrompt(options))}</textarea></label>
       <div class="pc-actions wrap"><button class="pc-btn" data-act="image-backfill">补未生图楼层</button><button class="pc-btn dark" data-act="illprompt-save">保存提示词</button><button class="pc-btn" data-act="illprompt-default">恢复默认</button><button class="pc-btn" data-act="illprompt-preview">预览当前请求</button><button class="pc-btn" data-act="illprompt-last" ${hasRequest?'':'disabled'}>最近组装的请求</button></div>
-      <div class="pc-hint">保存后用于下一次自动插图；恢复默认先填回编辑框，保存才生效。两种分级都填写姿势、视线、站位、互动与构图。张数沿用上面的选择。修改输出格式时请保留画面字段。预览不发请求、不生图。</div>
+      <div class="pc-hint">保存后用于下一次自动插图。恢复默认先填回编辑框，保存才生效。默认规则明确视线对象、身体朝向、手部接触与互动双方，张数沿用上面的选择。修改输出格式时请保留画面字段。预览可查看本次请求。</div>
     </section>`;
 }
 
@@ -1944,7 +1973,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.54-native.3（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.54-native.4（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1993,7 +2022,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.54-native.3';
+globalThis.__PC_VERSION = '0.8.54-native.4';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -5574,21 +5603,42 @@ function canSplit() {
  * scene：AI 写的场景；picks：[{ char, tags, x, y }]
  */
 const hasNsfwRating = text => M.tokenize(String(text || '').replace(/[;\n]/g, ',')).some(t => t.text.trim().toLowerCase() === 'nsfw');
+// 当前画面给出明确视线或姿势时，清理固定正面词中对应类别的摆拍指令。
+function preferStoryTags(defaults, story, model) {
+    const normalize = value => String(value).replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    const posture = /^(?:standing|sitting|kneeling|crouching|squatting|lying|walking|running|leaning|bending)(?:$| (?:on|in|at|beside|next to|behind|up|down|forward|back|backward|straight|upright|cross-legged|over|toward|towards)\b)/;
+    const tags = model.tokenize(story).filter(token => token.weight > 0).map(token => normalize(token.text));
+    const gaze = tags.some(tag => /\blooking (?:at|to|toward|towards|away|down|up|back|over|into)\b|\b(?:eyes closed|eye contact|gazing at)\b/.test(tag));
+    const direction = tags.some(tag => /\b(?:facing|profile|side view|front view|back view|from side|from behind|from front|head turned|head down|head up)\b/.test(tag));
+    const pose = tags.some(tag => posture.test(tag));
+    const hands = tags.some(tag => /\b(?:hands?|arms?|reaching|holding|offering|receiving|touching|pointing|hug|hugging|handshake|pulling|supporting)\b/.test(tag));
+    return model.tokenize(defaults).filter(token => {
+        if (token.isArtist || token.weight <= 0) return true;
+        const tag = normalize(token.text);
+        if (gaze && /^(?:looking (?:at|to|toward|towards|away|down|up|back|over|into)\b.*|eyes closed|(?:direct )?eye contact|gazing at\b.*)$/.test(tag)) return false;
+        if (direction && /^(?:facing\b.*|profile|side view|front view|back view|from side|from behind|from front|three-quarter view|head turned\b.*|head down|head up)$/.test(tag)) return false;
+        if (pose && posture.test(tag)) return false;
+        if (hands && /^(?:arms at sides|hands at sides|hands on hips|hand on hip|arms crossed|crossed arms|folded arms|outstretched arms)$/.test(tag)) return false;
+        return true;
+    }).map(token => token.raw || (Math.abs(token.weight - 1) < 0.001 ? token.text : `${model.fmtWeight(token.weight)}::${token.text}::`)).join(', ');
+}
+
 function buildChatPrompt(scene, picks, { nsfw = hasNsfwRating(scene) } = {}) {
     const d = getData();
-    const artist = d.active ? M.ticketString(d, d.active) : '';
+    const story = [scene, ...picks.map(p => p.tags)].filter(Boolean).join(', ');
+    const artist = preferStoryTags(d.active ? M.ticketString(d, d.active) : '', story, M);
     const chars = picks.map(p => p.char);
-    const base = M.mergeTags(artist, /\b(?:\d+(?:boys?|girls?|others?)|no humans)\b/i.test(scene) ? '' : countTags(chars), scene, d.options.chatPositive || '');
+    const base = M.mergeTags(artist, /\b(?:\d+(?:boys?|girls?|others?)|no humans)\b/i.test(scene) ? '' : countTags(chars), scene, preferStoryTags(d.options.chatPositive || '', story, M));
     const chatNeg = [d.active ? M.ticketNeg(d, d.active) : '', d.options.chatNegative || ''].filter(Boolean).join(', ');
     if (d.options.chatNoSplit || !canSplit() || picks.length === 0) {
-        const flat = M.mergeTags(base, ...picks.map(p => [fixedTags(p.char, { nsfw }), p.tags].filter(Boolean).join(', ')));
+        const flat = M.mergeTags(base, ...picks.map(p => [preferStoryTags(fixedTags(p.char, { nsfw }), [scene, p.tags].filter(Boolean).join(', '), M), p.tags].filter(Boolean).join(', ')));
         const { positive, negative } = E.composeStudio({ pos: flat, neg: [chatNeg, ...picks.flatMap(p => [p.char.negative, p.uc])].filter(Boolean).join(', ') });
         return { positive, negative, chars: [] };
     }
     const { positive, negative } = E.composeStudio({ pos: base, neg: chatNeg });
     return {
         positive, negative,
-        chars: picks.map(p => ({ prompt: soloize([fixedTags(p.char, { nsfw }), p.tags].filter(Boolean).join(', ')), uc: [p.char.negative, p.uc].filter(Boolean).join(', '), center: { x: snap(p.x), y: snap(p.y) } })),
+        chars: picks.map(p => ({ prompt: soloize([preferStoryTags(fixedTags(p.char, { nsfw }), [scene, p.tags].filter(Boolean).join(', '), M), p.tags].filter(Boolean).join(', ')), uc: [p.char.negative, p.uc].filter(Boolean).join(', '), center: { x: snap(p.x), y: snap(p.y) } })),
     };
 }
 
