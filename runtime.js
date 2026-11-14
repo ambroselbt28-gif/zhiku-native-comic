@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.15';
+export const runtimeVersion = '0.8.60-native.16';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -2409,7 +2409,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.15（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.16（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2458,7 +2458,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.15';
+globalThis.__PC_VERSION = '0.8.60-native.16';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3526,17 +3526,25 @@ const saveSettingsDebounced = __shim.saveSettingsDebounced;
 const extension_settings = new Proxy({}, { get: (_, k) => { const v = __shim.extension_settings[k]; return typeof v === 'function' ? v.bind(__shim.extension_settings) : v; }, set: (_, k, v) => { __shim.extension_settings[k] = v; return true; } });
 const KEY = 'piaoce_nai';
 /** 脚本版跑在 iframe 里，用酒馆页面的 fetch */
-// 官方请求使用独立 fetch，避免页面上的请求包装器干扰，并覆盖整个响应读取过程。
-function createNaiNetwork({ document, pageFetch, Controller = globalThis.AbortController, schedule = (...args) => setTimeout(...args), unschedule = id => clearTimeout(id) } = {}) {
+// 官方两种通道均为浏览器联网；单次请求只选一路，不在失败后暗中切换重发。
+function createNaiNetwork({ document, pageFetch, getMode = () => 'isolated', Controller = globalThis.AbortController, schedule = (...args) => setTimeout(...args), unschedule = id => clearTimeout(id) } = {}) {
     let frame = null, cleanFetch = null, stopped = false;
+    let lastKind = '页面 fetch';
     const pending = new Set();
     const abortError = () => Object.assign(new Error('生图已停止'), { name: 'AbortError' });
-    function officialFetch(input, init) {
+    async function officialFetch(input, init, info = {}) {
         if (stopped) throw abortError();
         const official = /^https:\/\/image\.novelai\.net(?:\/|$)/i.test(String(input?.url ?? input));
         if (!official) return pageFetch(input, init);
+        const mode = (info.networkMode ?? getMode()) === 'page' ? 'page' : 'isolated';
+        info.networkMode = mode;
+        info.origin = document?.location?.origin || '未知';
+        info.visibility = document?.visibilityState || '未知';
+        const nav = document?.defaultView?.navigator;
+        info.online = typeof nav?.onLine === 'boolean' ? nav.onLine : '未知';
+        info.webview = String(nav?.userAgent || '').slice(0,300);
         if (frame && !frame.isConnected) { frame = null; cleanFetch = null; }
-        if (!cleanFetch && document) {
+        if (mode === 'isolated' && !cleanFetch && document) {
             let candidate;
             try {
                 candidate = document.createElement('iframe');
@@ -3550,7 +3558,18 @@ function createNaiNetwork({ document, pageFetch, Controller = globalThis.AbortCo
                 frame = candidate;
             } catch { candidate?.remove(); }
         }
-        return (cleanFetch || pageFetch)(input, init);
+        const send = mode === 'page' ? pageFetch : (cleanFetch || pageFetch);
+        info.transport = lastKind = mode === 'page' ? '页面 fetch' : cleanFetch ? '独立浏览器 fetch' : '页面 fetch（独立通道创建失败）';
+        const started = Date.now();
+        try {
+            const response = await send(input, init);
+            info.headersMs = Date.now() - started;
+            info.status = response.status;
+            return response;
+        } catch (error) {
+            info.headersMs = Date.now() - started;
+            throw error;
+        }
     }
     async function run(task, { timeout = 240000, signal } = {}) {
         if (stopped || signal?.aborted) throw abortError();
@@ -3580,7 +3599,15 @@ function createNaiNetwork({ document, pageFetch, Controller = globalThis.AbortCo
     }
     return {
         fetch: officialFetch, run,
-        kind: () => cleanFetch ? '独立浏览器 fetch' : '页面 fetch',
+        kind: () => lastKind,
+        errorText(error, key = '') {
+            // 不记录 headers/body/stack；服务错误中意外回显的凭据也必须遮蔽。
+            let text = String(error?.name || 'Error') + ': ' + String(error?.message || error || '未知错误');
+            for (const secret of [String(key).trim(), String(key).trim().replace(/^Bearer\s+/i, '')]) {
+                if (secret) text = text.split(secret).join('[凭据已省略]');
+            }
+            return text.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [凭据已省略]').replace(/pst-[\w-]+/g, '[凭据已省略]').slice(0,500);
+        },
         stop() {
             stopped = true;
             for (const controller of pending) controller.abort(abortError());
@@ -3592,6 +3619,7 @@ function createNaiNetwork({ document, pageFetch, Controller = globalThis.AbortCo
 const naiNetwork = createNaiNetwork({
     document: typeof DOC === 'undefined' ? null : DOC,
     pageFetch: (...args) => (globalThis.__pcFetch || fetch)(...args),
+    getMode: () => settings().naiNetworkMode,
 });
 const http = (...args) => naiNetwork.fetch(...args);
 
@@ -3615,7 +3643,7 @@ const SAMPLERS = [
 const SCHEDULES = [['karras', 'karras（默认）'], ['exponential', 'exponential'], ['polyexponential', 'polyexponential'], ['native', 'native']];
 
 const DEFAULTS = {
-    naiMode: 'key', naiKey: '', naiSite: '', naiSiteKey: '',
+    naiMode: 'key', naiNetworkMode: 'isolated', naiKey: '', naiSite: '', naiSiteKey: '',
     novelaimode: 'nai-diffusion-4-5-full',
     novelai_width: '832', novelai_height: '1216', novelai_steps: '28', nai3Scale: '5', novelai_seed: '0',
     novelai_sampler: 'k_dpmpp_2m_sde', Schedule: 'karras', cfg_rescale: '0.18', nai3Variety: 'false',
@@ -3782,7 +3810,7 @@ async function sitePost(path,init,info={}) {
         if(siteStopped||init.signal?.aborted)throw Object.assign(new Error('生图已停止'),{name:'AbortError'});
         const url=list[i],more=i<list.length-1;let r;
         Object.assign(info, { url, stage: '等待服务器响应' });
-        try{r=await http(url,init);}catch(e){
+        try{r=await http(url,init,info);}catch(e){
             if(siteStopped||e?.name==='AbortError'||init.signal?.aborted||!more)throw e;
             tried.push(url+' 连不上');continue;
         }
@@ -3801,7 +3829,7 @@ async function sitePost(path,init,info={}) {
     throw new Error('站点连不上');
 }
 function siteResponseText(r) {
-    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):'',r.stage||'',r.transport||''].filter(Boolean).join(' · ');
+    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):'',r.stage||'',r.transport||'',r.networkMode?'选择通道：'+r.networkMode:'',r.headersMs!=null?'等待响应头 '+r.headersMs+'ms':'',r.origin?'页面来源：'+r.origin:'',r.visibility?'页面：'+r.visibility:'',r.online!==undefined?'在线提示：'+r.online:'',r.webview?'浏览器：'+r.webview:'',r.networkError||''].filter(Boolean).join(' · ');
 }
 
 function authKey() {
@@ -3851,10 +3879,10 @@ function createNaiGate({ sleep = ms => new Promise(resolve => setTimeout(resolve
 const __naiGate=createNaiGate({notice:message=>toastr.info(message,'智库 · 生图排队')});
 /** 浏览器层面的网络错误（Failed to fetch 之类）换成能看懂的说明 */
 function netError(e) {
-    if (!(e instanceof TypeError) || !/fetch|network|load failed/i.test(String(e.message))) return e;
+    if (e?.name !== 'TypeError' || !/fetch|network|load failed/i.test(String(e.message))) return e;
     const mode = settings().naiMode;
     const where = mode === 'site' ? '第三方站点（站点可能挂了，或者地址填错了）' : mode === 'tavern' ? '酒馆后端（酒馆可能断开了，刷新页面试试）' : 'NovelAI（image.novelai.net）';
-    return Object.assign(new Error(`连不上${where}，未收到可读取的响应（${e.message}）。请检查 TT 是否已加入手机代理的应用名单，以及当前网络连接`), { status: 0 });
+    return Object.assign(new Error(`连不上${where}，未收到可读取的响应（${e.message}）。可能是连接中断、跨域限制或 WebView 联网失败。可到设置 → NovelAI 做两种通道对照，详见问题记录`), { status: 0 });
 }
 function normalizeNaiChars(chars, comic = false) {
     const snap = v => { const n = Number(v); return Number.isFinite(n) ? +Math.min(0.9, Math.max(0.1, Math.round((n - 0.1) / 0.2) * 0.2 + 0.1)).toFixed(1) : 0.5; };
@@ -4240,7 +4268,7 @@ async function comfyUseWorkflow(kind, name = '', raw = null) {
     s.comfyWf = kind + ':' + name; s.comfyWfApi = JSON.stringify(api); save();
 }
 async function generateRequest(opts) {
-    const t0 = Date.now(), s0 = settings(), logSource = opts.src || "其他生图入口";
+    const t0 = Date.now(), s0 = { ...settings() }, logSource = opts.src || "其他生图入口";
     const brief = () => ({
         返回: siteResponseText(responseInfo),
         通道: opts.backend === 'comfy' ? 'ComfyUI' : { key: 'NovelAI 自己的 key', tavern: '酒馆里的 key', site: '第三方站点', gpt: 'OpenAI 兼容' }[s0.naiMode] || s0.naiMode,
@@ -4250,7 +4278,7 @@ async function generateRequest(opts) {
         分人物: (opts.chars || []).map((c, i) => `${i + 1}. ${c.prompt}${c.center ? ` @${c.center.x},${c.center.y}` : ''}`),
         角色参考: opts.director?.length || 0, 氛围: opts.refs?.images?.length || 0, 垫图: !!opts.i2i?.image,
     });
-    let naiSent=null;const responseInfo={};
+    let naiSent=null;const responseInfo={networkMode:s0.naiMode === "key" ? s0.naiNetworkMode : undefined};
     try {
         const official = opts.backend !== 'comfy' && s0.naiMode === 'key';
         const send = signal => generateRequestInner(signal ? { ...opts, signal } : opts, body=>{try{
@@ -4261,11 +4289,11 @@ async function generateRequest(opts) {
         globalThis.__zkLog?.('生图', `成功 · ${((Date.now() - t0) / 1000).toFixed(1)} 秒 · ${(opts.chars || []).length ? (opts.chars.length + ' 个人物') : '没分人物'}${opts.director?.length ? ' · 带角色参考 ' + opts.director.length + ' 张' : ''}`, brief());
         return r;
     } catch (e) {
-        responseInfo.transport = s0.naiMode === 'key' ? naiNetwork.kind() : '';
+        responseInfo.networkError = naiNetwork.errorText(e, s0.naiMode === 'key' ? s0.naiKey : s0.naiSiteKey);
         const b=brief();
         const json=naiSent?JSON.stringify(naiSent,null,1):'';
         const detail=json?'实际发送的 NovelAI 请求（图片与缓存凭据已省略）：\n'+json.slice(0,10000)+(json.length>10000?'\n[参数记录超过 10000 字，已截断]':'')+'\n来源：'+logSource+'\n返回：'+siteResponseText(responseInfo):b;
-        globalThis.__zkLog?.('生图失败',(e.message || String(e))+' · '+((Date.now()-t0)/1000).toFixed(1)+' 秒'+(e.status?' · HTTP '+e.status:''),detail);
+        globalThis.__zkLog?.('生图失败',responseInfo.networkError+' · '+((Date.now()-t0)/1000).toFixed(1)+' 秒'+(e.status?' · HTTP '+e.status:''),detail);
         throw e;
     }
 }
@@ -4496,7 +4524,7 @@ async function unzipFirstImage(u8) {
 // ───────────── 测试 key、查点数 ─────────────
 
 /** 返回 { ok, text } */
-async function testConnection() {
+async function testConnection(networkMode = settings().naiNetworkMode) {
     const s = settings();
     try {
         if (s.naiMode === 'gpt') {
@@ -4519,18 +4547,52 @@ async function testConnection() {
             return { ok: true, text: '第三方站点没法提前检查，直接去生图页试一张' };
         }
         const key = authKey();
-        return await naiNetwork.run(async signal => {
-            const r = await http('https://image.novelai.net/user/subscription', { headers: { Authorization: 'Bearer ' + key }, signal });
-            if (r.status === 401) return { ok: false, text: 'key 不对' };
-            if (!r.ok) return { ok: false, text: `NovelAI 返回 ${r.status}` };
-            return { ok: true, text: '能用' + anlasText(await r.json()) };
-        }, { timeout: 15000 });
+        return await queryOfficialSubscription(key, networkMode);
     } catch (e) {
         // 连接测试使用图像服务的订阅接口，网络异常时明确标为验证失败。
-        if (s.naiMode === 'key' && e instanceof TypeError) return { ok: false, text: '连接测试失败：无法完成 image.novelai.net 的订阅查询（' + e.message + '）。Key 和生图状态尚待验证，请检查 TT 的联网或代理设置' };
+        if (s.naiMode === 'key' && e?.name === 'TypeError') return { ok: false, text: '连接测试失败：无法完成 image.novelai.net 的订阅查询（' + e.message + '）。Key 和生图状态尚待验证，请检查 TT 的联网或代理设置' };
         return { ok: false, text: '连不上：' + (e?.message || e) };
     }
 }
+// 对照仅查询订阅；不改变已保存的通道，不提交任何生图请求。
+async function queryOfficialSubscription(key, networkMode) {
+    const started = Date.now();
+    const info = { networkMode, url: 'https://image.novelai.net/user/subscription', stage: '等待服务器响应' };
+    let result;
+    try {
+        result = await naiNetwork.run(async signal => {
+            const response = await http(info.url, { headers: { Authorization: 'Bearer ' + key }, signal }, info);
+            info.stage = '读取订阅响应';
+            if (response.status === 401) { await response.body?.cancel?.(); return { ok:false, text:'key 不对' }; }
+            if (!response.ok) { await response.body?.cancel?.(); return { ok:false, text:'NovelAI 返回 ' + response.status }; }
+            const subscription = await response.json();
+            info.stage = '订阅查询完成';
+            return { ok:true, text:'能用' + anlasText(subscription) };
+        }, { timeout:15000 });
+    } catch (error) {
+        info.networkError = naiNetwork.errorText(error, key);
+        result = { ok:false, text:'连接测试失败：image.novelai.net 的订阅查询未完成（' + info.networkError + '）。Key 和生图状态尚待验证' };
+    }
+    info.elapsedMs = Date.now() - started;
+    const channel = info.networkMode === 'page' ? '页面联网' : '独立 iframe 联网';
+    const detail = siteResponseText(info) + ' · 总耗时 ' + info.elapsedMs + 'ms';
+    globalThis.__zkLog?.('NAI 通道测试', channel + ' · ' + (result.ok ? '成功' : '失败'), detail);
+    return { ...result, text:channel + '：' + result.text + '（' + (info.elapsedMs / 1000).toFixed(1) + ' 秒）' };
+}
+let naiProbePromise = null;
+function probeNaiNetwork() {
+    if (naiProbePromise) return naiProbePromise;
+    if (settings().naiMode !== 'key') return Promise.resolve({ok:false,text:'请先选择填我的 NovelAI Key'});
+    const key = authKey();
+    if (!key) return Promise.resolve({ok:false,text:'请先填写 NovelAI Key'});
+    naiProbePromise = (async () => {
+        const results = [];
+        for (const mode of ['page', 'isolated']) results.push(await queryOfficialSubscription(key, mode));
+        return {ok:results.every(item=>item.ok),text:results.map(item=>item.text).join('；') + '。仅验证订阅查询，未测试生图。'};
+    })().finally(() => { naiProbePromise = null; });
+    return naiProbePromise;
+}
+
 function anlasText(j) {
     const t = j?.trainingStepsLeft || j?.subscription?.trainingStepsLeft;
     if (!t) return '';
@@ -4665,7 +4727,7 @@ async function inpaintRequest({ image, mask, prompt, negative, width, height, st
     return imageFromResponse(buf);
 }
 
-return { comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();naiNetwork.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
+return { comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();naiNetwork.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, probeNaiNetwork, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
 })();
 
 // ───── engine.js ─────
@@ -10298,7 +10360,11 @@ function viewSettings(d) {
       ${n.naiMode === 'key' ? `
       <label class="pc-field"><span>NovelAI key</span>
         <div class="pc-keyrow"><input data-st="naiKey" type="${ui.showKey ? 'text' : 'password'}" value="${esc(n.naiKey)}" placeholder="pst-…" autocomplete="off"><button class="pc-pill dashed" data-act="togglekey">${ui.showKey ? '藏起来' : '显示'}</button></div></label>
-      <div class="pc-hint">在 NovelAI 网页：左上角菜单 → Account Settings → Get Persistent API Token，复制过来。</div>` : ''}
+      <div class="pc-hint">在 NovelAI 网页：左上角菜单 → Account Settings → Get Persistent API Token，复制过来。</div>
+      <label class="pc-field"><span>官方联网通道</span><select data-st="naiNetworkMode"><option value="isolated" ${n.naiNetworkMode !== 'page' ? 'selected' : ''}>独立 iframe 联网（原有方式）</option><option value="page" ${n.naiNetworkMode === 'page' ? 'selected' : ''}>页面联网（对照用）</option></select></label>
+      <div class="pc-hint">两种方式都使用浏览器联网，不是 Rust 代理。切换后下一次请求生效；失败不会自动换通道。原有同通道有限重试仍保留。</div>
+      <button class="pc-btn" data-act="naiprobe">对照测试两种通道（不生图）</button>
+      <div class="pc-hint">依次查询订阅，每路最多 15 秒，不生成图片、不消耗生图点数。结果写入问题记录；测试成功不保证生图 POST 成功。</div>` : ''}
       ${n.naiMode === 'tavern' ? '<div class="pc-hint">用酒馆「API 连接」里 NovelAI 那一栏填好的 key。走这条路时不能分角色、不能用氛围和角色参考、不能局部重绘。</div>' : ''}
       ${n.naiMode === 'site' ? `
       <label class="pc-field"><span>站点地址</span><input data-st="naiSite" value="${esc(n.naiSite)}" placeholder="https://…"></label>
@@ -10534,6 +10600,13 @@ async function onClick(ev, outside = false) {
             case 'imgstore': { getData().options.imageStore = el.dataset.mode; commit(); render(); break; }
             case 'nighttheme': { getData().options.nightTheme = el.dataset.theme; commit(); render(); break; }
             case 'togglekey': ui.showKey = !ui.showKey; render(); break;
+            case 'naiprobe': {
+                el.disabled = true; el.textContent = '对照中…';
+                try { ui.naiTest = await N.probeNaiNetwork(); }
+                catch (e) { ui.naiTest = {ok:false,text:String(e?.message || e)}; }
+                finally { render(); }
+                break;
+            }
             case 'naitest': {
                 el.disabled = true; el.textContent = '测试中…';
                 N.save();
@@ -11736,7 +11809,7 @@ async function onChangeEv(ev) {
         if (el.dataset.st === 'size') { const [w, h] = el.value.split('x'); s.novelai_width = w; s.novelai_height = h; }
         else s[el.dataset.st] = el.value.trim();
         N.save();
-        if (el.dataset.st === 'naiKey' || el.dataset.st === 'naiSite') ui.naiTest = null;
+        if (['naiKey','naiSite','naiNetworkMode'].includes(el.dataset.st)) { ui.naiTest = null; if (el.dataset.st === 'naiNetworkMode') render(); }
         if (el.dataset.st === 'size') render();
         return;
     }

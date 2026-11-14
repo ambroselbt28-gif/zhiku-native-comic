@@ -17,6 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
+import { renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
 import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
@@ -228,6 +229,27 @@ window.stcrSelfTest = async () => {
     check('官方请求绑定独立真实 iframe 的 fetch', cleanRequests === 1 && pageRequests === 0 && networkFrame.isConnected);
     await naiNetwork.fetch('/api/test');
     check('宿主 API 继续使用原页面联网', pageRequests === 1);
+    const transportConfig = {naiNetworkMode:'isolated'}, transportUi = {naiTest:{ok:true,text:'旧结果'}};
+    let transportSaves=0, transportRenders=0, probeCalls=0;
+    const controls=document.createElement('section');document.body.appendChild(controls);
+    const refreshControls=()=>{transportRenders++;controls.innerHTML=renderNetworkControls(transportConfig);};
+    const transportApi={settings:()=>transportConfig,save:()=>transportSaves++,probeNaiNetwork:async()=>{probeCalls++;return {ok:true,text:'合成对照结果'};}};
+    refreshControls();
+    check('联网选择默认保持独立通道',controls.querySelector('select').value==='isolated');
+    controls.onchange=event=>networkSettingsChange(event.target,transportApi,transportUi,refreshControls);
+    controls.querySelector('select').value='page';controls.querySelector('select').dispatchEvent(new Event('change',{bubbles:true}));
+    check('正式设置处理器保存页面通道并清除旧结果',transportSaves===1 && transportConfig.naiNetworkMode==='page' && transportUi.naiTest===null && transportRenders===2);
+    check('重绘后仍显示已选页面通道',controls.querySelector('select').value==='page');
+    const selectedInfo={networkMode:transportConfig.naiNetworkMode};
+    await naiNetwork.fetch('https://image.novelai.net/user/subscription',{},selectedInfo);
+    check('真实 iframe 存在时页面通道仍使用页面 fetch',pageRequests===2 && cleanRequests===1 && selectedInfo.transport==='页面 fetch');
+    controls.onclick=event=>{if(event.target.dataset.act==='naiprobe')void runNetworkProbe(event.target,transportApi,transportUi,refreshControls);};
+    controls.querySelector('button').click();await nextTurn();
+    check('正式对照按钮调用探测并显示完成结果',probeCalls===1 && transportUi.naiTest.text==='合成对照结果' && !controls.querySelector('button').disabled);
+    check('联网控件适配手机宽度',document.documentElement.scrollWidth<=window.innerWidth);
+    const foreignFailure=new networkFrame.contentWindow.TypeError('Failed to fetch');
+    check('真实 iframe 错误可记录类型且不是主窗口 TypeError',!(foreignFailure instanceof TypeError) && naiNetwork.errorText(foreignFailure)==='TypeError: Failed to fetch');
+    controls.remove();
     try { await naiNetwork.run(signal => { hangingSignal = signal; return new Promise(() => {}); }, { timeout: 25 }); }
     catch (error) { check('等待中的请求超时会中断并标为可重试', error.retryableNetwork && hangingSignal.aborted); }
     naiNetwork.stop();

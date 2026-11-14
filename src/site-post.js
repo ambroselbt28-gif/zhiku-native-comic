@@ -16,7 +16,7 @@ async function sitePost(path,init,info={}) {
         if(siteStopped||init.signal?.aborted)throw Object.assign(new Error('生图已停止'),{name:'AbortError'});
         const url=list[i],more=i<list.length-1;let r;
         Object.assign(info, { url, stage: '等待服务器响应' });
-        try{r=await http(url,init);}catch(e){
+        try{r=await http(url,init,info);}catch(e){
             if(siteStopped||e?.name==='AbortError'||init.signal?.aborted||!more)throw e;
             tried.push(url+' 连不上');continue;
         }
@@ -35,5 +35,5 @@ async function sitePost(path,init,info={}) {
     throw new Error('站点连不上');
 }
 function siteResponseText(r) {
-    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):'',r.stage||'',r.transport||''].filter(Boolean).join(' · ');
+    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):'',r.stage||'',r.transport||'',r.networkMode?'选择通道：'+r.networkMode:'',r.headersMs!=null?'等待响应头 '+r.headersMs+'ms':'',r.origin?'页面来源：'+r.origin:'',r.visibility?'页面：'+r.visibility:'',r.online!==undefined?'在线提示：'+r.online:'',r.webview?'浏览器：'+r.webview:'',r.networkError||''].filter(Boolean).join(' · ');
 }
