@@ -198,6 +198,44 @@ window.stcrSelfTest = async () => {
     catch (error) { check('等待中的请求超时会中断并标为可重试', error.retryableNetwork && hangingSignal.aborted); }
     naiNetwork.stop();
     check('停用后移除独立联网 iframe', !networkFrame.isConnected);
+    // 正式目录按钮应在阅读器内连续发起任务，生成楼层可位于聊天可视区域之外。
+    const readerContext = { chatId: 'reader-fixture', chat: Array.from({ length: 28 }, (_, id) => ({ name: '目录角色', mes: `第 ${id} 段合成剧情，角色走进咖啡馆。` })), saveChat: async () => {} };
+    const plans = [], readerErrors = [];
+    const readerController = createComicController({ document, getContext: () => readerContext, getData: () => ({ options: {} }), esc: escape,
+        askLLM: () => new Promise((resolve, reject) => plans.push({ resolve, reject })),
+        generatePage: async () => ({ image }), storeImage: async () => ({ url: image }), resolveUrl: value => value,
+        notify() {}, notifyError: error => readerErrors.push(error),
+    });
+    await readerController.openBook();
+    const reader = document.querySelector('.pc-comic-book');
+    reader.querySelector('[data-b="toc"]').click();
+    const directory = reader.querySelector('.pc-comic-toc');
+    directory.scrollTop = 60;
+    const scrollTop = directory.scrollTop;
+    const first = directory.querySelector('[data-adapt="10"]'); first.click(); await nextTurn();
+    check('目录点击画成漫画后阅读器和目录保持打开', reader.isConnected && reader.querySelector('.pc-comic-toc') === directory);
+    first.click();
+    check('生成状态禁用重复点击并保留目录滚动位置', plans.length === 1 && directory.querySelector('[data-adapt="10"]').disabled && directory.scrollTop === scrollTop);
+    directory.querySelector('[data-adapt="11"]').click(); await nextTurn();
+    check('目录里可以继续点其他楼层生成', plans.length === 2 && directory.querySelector('[data-adapt="11"]').disabled && reader.isConnected);
+    plans[0].resolve(page); await nextTurn();
+    check('首张新图自动进入仍打开的阅读器', readerController.status(10).images === 1 && !!directory.querySelector('[data-goto="0"]') && !reader.querySelector('footer').hidden && !!reader.querySelector('.pc-comic-stage img'));
+    plans[1].resolve(page); await nextTurn();
+    check('连续完成后目录即时展示两个已画楼层', directory.querySelectorAll('[data-goto]').length === 2 && reader.isConnected && directory.scrollTop === scrollTop);
+    [...directory.querySelectorAll('[data-goto]')].find(button => button.textContent.includes('第 11 楼')).click();
+    reader.querySelector('[data-mode="flow"]').click();
+    check('生成完成可直接从目录进入该楼漫画', !reader.querySelector('.pc-comic-toc') && reader.querySelector('header b').textContent.includes('第 11 楼'));
+    reader.querySelector('[data-b="toc"]').click();
+    reader.querySelector('[data-adapt="12"]').click(); await nextTurn();
+    plans[2].reject(Error('合成目录失败')); await nextTurn();
+    check('目录显示生成失败并恢复重试按钮', reader.querySelector('[data-adapt="12"]').textContent.includes('合成目录失败') && !reader.querySelector('[data-adapt="12"]').disabled && readerErrors.length === 1);
+    reader.querySelector('[data-adapt="12"]').click(); await nextTurn(); plans[3].resolve(page); await nextTurn();
+    check('失败后留在目录即可重试成功', readerController.status(12).images === 1 && reader.querySelectorAll('.pc-comic-toc [data-goto]').length === 3);
+    reader.querySelector('[data-adapt="0"]').click(); await nextTurn(); plans[4].resolve(page); await nextTurn();
+    check('前面楼层补图后保留当前阅读页', reader.querySelector('header b').textContent.includes('第 11 楼') && reader.isConnected);
+    readerController.renderAll({ chatChanged: true });
+    check('切换聊天时阅读器按原流程关闭', !reader.isConnected);
+    readerController.stop();
     return checks;
 };
 try {

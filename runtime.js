@@ -989,7 +989,8 @@ function createComicController(deps) {
         const text = st === 'run' ? '生成中…' : st === 'wait' ? '排队中' : err ? '没出来' : enabled() ? (opts().comicAuto === false ? '还没生成' : '等待生成') : '漫画模式没开';
         return `<div class="pc-comic-wait" data-ckey="${b.key}" data-page="${b.page}"><div>第 ${b.page} / ${b.total} 页 · ${text}${err ? `<small>${esc(err)}</small>` : ''}${!st ? `<br><button data-cgen>${err ? '重试' : '生成这一页'}</button> <button data-cwork>编辑本页</button>` : ''}</div></div>`;
     }
-    function render(id) {
+    function render(id, { refreshBook = true } = {}) {
+        if (refreshBook) for (const refresh of readers) refresh();
         const el = doc.querySelector(`#chat .mes[mesid="${id}"]`);
         const msg = getContext().chat?.[id];
         el?.querySelector(':scope .pc-comic')?.remove();
@@ -1040,7 +1041,7 @@ function createComicController(deps) {
     function renderAll({ chatChanged = false } = {}) {
         if (chatChanged) { chatSeq++; errors.clear(); failed.clear(); adapting.clear(); redrawing.clear(); doc.querySelectorAll('.pc-comic').forEach(n => n.remove()); cancelPress({type:'cancel'}); for (const close of [...panels]) close(); }
         const chat = getContext().chat || [];
-        for (let i = 0; i < chat.length; i++) if (chat[i]?.mes?.includes('<image') || chat[i]?.extra?.zhikuComicSrc || chat[i]?.extra?.zhikuComicFold || isAdapting(i) || failed.has(i)) render(i);
+        for (let i = 0; i < chat.length; i++) if (chat[i]?.mes?.includes('<image') || chat[i]?.extra?.zhikuComicSrc || chat[i]?.extra?.zhikuComicFold || isAdapting(i) || failed.has(i)) render(i, { refreshBook: false });
         for (const refresh of readers) refresh();
     }
 
@@ -1351,14 +1352,35 @@ function createComicController(deps) {
     }
 
     // ── 漫画书：翻书（摊开两页）/ 卡片堆 / 上下滑 ──
+    function floorStatus(id) {
+        const msg = getContext().chat?.[id], blocks = comicBlocks(srcOf(msg));
+        return {
+            busy: isRedrawing(id) || isAdapting(id) || [...running.keys()].some(key => key.startsWith(id + ':')),
+            images: blocks.filter(block => rec(msg, block.key)?.versions?.some(version => version.url)).length,
+            pages: blocks.length,
+            error: failure(id) || blocks.map(block => errors.get(`${id}:${block.key}`)).filter(Boolean).join('；'),
+        };
+    }
     async function openBook() {
         if (stopped) return;
-        const chat = getContext().chat || [];
-        const pages = [];
-        chat.forEach((msg, id) => {
-            if (!msg || msg.is_user) return;
-            for (const b of comicBlocks(srcOf(msg))) { const v = curVer(rec(msg, b.key)); if (v) pages.push({ id, captionSource: captionSource(v, b.inner), page: b.page, total: b.total, url: v.url, name: msg.name || '', caps: v.textMode === 'overlay' ? captionsHtml(captionSource(v, b.inner), esc, opts().comicCapSize || 's') : '' }); }
-        });
+        const collectPages = () => {
+            const pages = [];
+            (getContext().chat || []).forEach((msg, id) => {
+                if (!msg || msg.is_user) return;
+                for (const block of comicBlocks(srcOf(msg))) {
+                    const version = curVer(rec(msg, block.key));
+                    if (!version) continue;
+                    const source = captionSource(version, block.inner);
+                    pages.push({
+                        id, key: block.key, captionSource: source,
+                        page: block.page, total: block.total, url: version.url, name: msg.name || '',
+                        caps: version.textMode === 'overlay' ? captionsHtml(source, esc, opts().comicCapSize || 's') : '',
+                    });
+                }
+            });
+            return pages;
+        };
+        let pages = collectPages();
         const urls = new Map();
         const url = async p => { if (!urls.has(p.url)) urls.set(p.url, await resolveUrl(p.url)); return urls.get(p.url); };
         const art = p => `<div class="pc-cb-art"><img data-cb="${esc(p.url)}" alt="第 ${p.id} 楼第 ${p.page} 页" draggable="false">${p.caps || ''}<span>${p.id} 楼 · ${p.page}/${p.total}</span></div>`;
@@ -1456,6 +1478,7 @@ function createComicController(deps) {
         function build() {
             book.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
             if (!pages.length) { stage.innerHTML = '<div class="empty">这个聊天里还没有漫画页<br>点右上角「目录」，挑一楼点「画成漫画」；<br>也可以点楼层按钮里的 📖。<br><button class="bb wide" data-b="toc">打开目录选一楼</button></div>'; book.querySelector('footer').hidden = true; info(); return; }
+            book.querySelector('footer').hidden = false;
             mode === 'book' ? buildBook() : mode === 'scroll' ? buildScroll() : buildFlow();
         }
         function go(n) {
@@ -1465,8 +1488,13 @@ function createComicController(deps) {
             if (mode === 'flow') layoutFlow(); else { stage.querySelector(`[data-k="${at}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); info(); }
         }
         const refresh = () => {
-            for (const p of pages) p.caps = p.captionSource ? captionsHtml(p.captionSource, esc, opts().comicCapSize || 's') : '';
-            build();
+            const current = pages[at], next = collectPages();
+            const changed = JSON.stringify(next) !== JSON.stringify(pages);
+            pages = next;
+            const selected = current ? pages.findIndex(page => page.id === current.id && page.key === current.key) : -1;
+            at = selected >= 0 ? selected : Math.max(0, Math.min(at, pages.length - 1));
+            if (changed) build();
+            if (book.querySelector('.pc-comic-toc')) toc();
         };
         readers.add(refresh);
         const close = () => { readers.delete(refresh); book.remove(); doc.removeEventListener('keydown', key); panels.delete(close); };
@@ -1478,17 +1506,22 @@ function createComicController(deps) {
             chatNow.forEach((m, id) => {
                 if (!isComicReply(m)) return;
                 const f = first.get(id);
-                if (f) { rows.push(`<button data-goto="${f.n}"><img data-cb="${esc(f.url)}" alt=""><span>第 ${id} 楼 · ${esc(f.name)}<small>${f.total} 页 · 点一下翻到这里</small></span></button>`); return; }
+                const status = floorStatus(id);
+                if (f) { rows.push(`<button data-goto="${f.n}"><img data-cb="${esc(f.url)}" alt=""><span>第 ${id} 楼 · ${esc(f.name)}<small>${f.total} 页 · ${status.busy ? '正在生成…' : '点一下翻到这里'}</small></span></button>`); return; }
                 const text = storyText(m.mes);
                 if (!text) return;
-                const busy = isAdapting(id);
-                rows.push(`<button data-adapt="${id}" class="todo"><i>${busy ? '…' : '＋'}</i><span>第 ${id} 楼 · ${esc(m.name || '')}<small>${busy ? '正在改编…' : esc(text.replace(/\s+/g, ' ').slice(0, 36)) + (text.length > 36 ? '…' : '')}</small></span><em>${busy ? '' : '画成漫画'}</em></button>`);
+                const busy = status.busy;
+                rows.push(`<button data-adapt="${id}" class="todo" ${busy ? 'disabled aria-busy="true"' : ''}><i>${busy ? '…' : '＋'}</i><span>第 ${id} 楼 · ${esc(m.name || '')}<small>${busy ? '正在生成…' : status.error ? esc(status.error) : esc(text.replace(/\s+/g, ' ').slice(0, 36)) + (text.length > 36 ? '…' : '')}</small></span><em>${busy ? '' : status.error ? '重试' : '画成漫画'}</em></button>`);
             });
-            const sheet = doc.createElement('div');
+            const previous = book.querySelector('.pc-comic-toc');
+            const scrollTop = previous?.scrollTop || 0;
+            const sheet = previous || doc.createElement('div');
             sheet.className = 'pc-comic-toc';
             sheet.innerHTML = `<h4>目录</h4><p class="pc-comic-toc-tip">已经画了的点一下翻过去；没画的点「画成漫画」，AI 会读那一楼的正文改编成漫画，画好就出现在这本书里。</p>${rows.join('') || '<p class="pc-comic-toc-tip">这个聊天里还没有角色的回复</p>'}`;
-            book.appendChild(sheet); fill(sheet);
-            sheet.querySelector('button:last-of-type')?.scrollIntoView({ block: 'end' });
+            if (!previous) book.appendChild(sheet);
+            fill(sheet);
+            if (previous) sheet.scrollTop = scrollTop;
+            else sheet.querySelector('button:last-of-type')?.scrollIntoView({ block: 'end' });
         };
         // 手势
         let sx = null, moved = false, drag = null;
@@ -1528,9 +1561,7 @@ function createComicController(deps) {
             const ad = ev.target.closest('[data-adapt]');
             if (ad) {
                 const id = Number(ad.dataset.adapt);
-                if (isAdapting(id)) return;
-                close();
-                doc.querySelector(`.mes[mesid="${id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                if (floorStatus(id).busy) return;
                 void adapt(id);
                 return;
             }
@@ -1555,15 +1586,7 @@ function createComicController(deps) {
 
     return {
         process, render, renderAll, openBook, generateOne, adapt, unadapt, openSettings, redrawAll,
-        status(id) {
-            const msg = getContext().chat?.[id], blocks = comicBlocks(srcOf(msg));
-            return {
-                busy: isRedrawing(id) || isAdapting(id) || [...running.keys()].some(key => key.startsWith(id + ':')),
-                images: blocks.filter(block => rec(msg, block.key)?.versions?.some(version => version.url)).length,
-                pages: blocks.length,
-                error: failure(id) || blocks.map(block => errors.get(`${id}:${block.key}`)).filter(Boolean).join('；'),
-            };
-        },
+        status: floorStatus,
         stop() {
             stopped = true;
             cancelPress({type:'stop'});
@@ -2220,7 +2243,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.54-native.9（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.54-native.10（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2269,7 +2292,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.54-native.9';
+globalThis.__PC_VERSION = '0.8.54-native.10';
 
 // ───── model.js ─────
 const __mod_model = (() => {
