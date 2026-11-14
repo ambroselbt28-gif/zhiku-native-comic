@@ -28,11 +28,12 @@ for(const [mode,limit,expected] of [['inline',2,2],['inline',1,1],['inline',5,3]
  let count=0;const jobs=[];
  const controller=createMarkerController({context:()=>ctx,getData:()=>data,generate:async()=>{count++;return 'data:image/png;base64,test'},upload:async()=>({url:'/image-'+count+'.png'}),notify(){}});
  const handler=vm.runInNewContext(part('    const onCharMsg = id => {','    for (const [ev, fn]')+'\nonCharMsg',{
-  setTimeout:fn=>fn(),comic:{render(){},process(){}},addMesButtons(){},getData:()=>data,
+  setTimeout:fn=>{const job=fn();if(job?.then)jobs.push(job);return job;},comic:{render(){},async process(){}},addMesButtons(){},getData:()=>data,
+  profiles:{async scan(){}},SillyTavern:{getContext:()=>ctx},C:{chatId:()=>ctx.chatId},stopped:false,
   __mod_marker:{process:(...args)=>{const p=controller.process(...args);jobs.push(p);return p}},illustAfter:async()=>{},console
  });
- handler(0);await Promise.all(jobs);assert.equal(count,expected,mode+limit);
- handler(0);await Promise.all(jobs);assert.equal(count,expected,'repeat render does not regenerate');
+ handler(0);for(let index=0;index<jobs.length;index++)await jobs[index];assert.equal(count,expected,mode+limit);
+ handler(0);for(let index=0;index<jobs.length;index++)await jobs[index];assert.equal(count,expected,'repeat render does not regenerate');
  assert.equal(msg.mes,original,'remaining markers stay in original message');
  if(expected<3){await controller.process(0,{manual:true,tokenIndex:2});assert.equal(count,expected+1,'manual extra marker generates exactly one image');}
  controller.stop();

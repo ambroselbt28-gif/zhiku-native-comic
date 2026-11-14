@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor } from './runtime-comic.js';
+import { createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
     if (!value) throw new Error(name);
@@ -156,6 +156,26 @@ window.stcrSelfTest = async () => {
     setLayout('comicPanelStyle','shounen');
     check('切回其他风格恢复原每页格数选择', document.querySelector('[data-cs="comicPanels"][data-v="1–2"]').classList.contains('on') && data.options.comicPanels === '1–2');
     check('分镜风格设置在手机宽度内显示', document.documentElement.scrollWidth <= window.innerWidth);
+    const profileData={characters:{},chatCast:{},options:{}},profileContext={chatId:'profile-browser',chat:[{name:'合成叙述',mes:'新角色走进咖啡馆。'}]};
+    const people={currentCast:()=>Object.values(profileData.characters).map(char=>({char,on:true})),blank:source=>({...source,appearance:[],outfits:[],outfitMode:'story'}),getChar:key=>profileData.characters[key],chatId:()=>profileContext.chatId,descOf:()=>''};
+    let profileSerial=0,profilePreview=null;
+    const profileController=createAutoCharacterProfiles({getContext:()=>profileContext,getData:()=>profileData,characters:people,settings:()=>({start:'image###',end:'###'}),uid:prefix=>prefix+(++profileSerial),pickJson:JSON.parse,commit:async()=>{},
+        askLLM:async(system,user)=>{const task=JSON.parse(user);return JSON.stringify(task.mode?{appearance:['1boy',task.mode==='modify'?'silver hair':'brown hair','blue eyes']}:{people:[{name:'新角色',evidence:'新角色走进咖啡馆。',appearance:['1boy','black hair','blue eyes'],inferred:true}]});}});
+    const profileUI=createProfileEditor({profiles:profileController,characters:people,esc:escape,preview:key=>{profilePreview={key,appearance:people.getChar(key).appearance.map(tag=>tag.en)};},modal:html=>{const box=document.createElement('section');box.style.cssText='max-width:680px;margin:auto';box.innerHTML=html;box.closeModal=()=>box.remove();document.body.append(box);return box;}});
+    const created=await profileController.scan(0),personKey=created[0];
+    check('首次出场自动生成角色档案并加入聊天', !!personKey && profileData.chatCast[profileContext.chatId][personKey] && people.getChar(personKey).appearance.some(tag=>tag.en==='black hair'));
+    globalThis.__zhikuProfiles={...profileController,open:profileUI.open};
+    const profileButton=document.createElement('button');profileButton.dataset.act='profile-open';profileButton.textContent='外貌方案 · AI修改';profileButton.onclick=()=>profileAction('profile-open',personKey);document.body.append(profileButton);profileButton.click();
+    check('人物页正式按钮处理分支打开外貌方案', document.querySelector('[data-profile-tags]').textContent.includes('black hair'));
+    document.querySelector('[data-profile-request]').value='头发改成银色，保留蓝眼';document.querySelector('[data-profile-modify]').click();await nextTurn();
+    check('自然语言修改保存标签并增加历史方案', people.getChar(personKey).appearance.some(tag=>tag.en==='silver hair') && people.getChar(personKey).autoProfile.versions.length===2);
+    document.querySelector('[data-profile-reroll]').click();await nextTurn();
+    check('外貌重roll同步替换角色库标签', people.getChar(personKey).appearance.some(tag=>tag.en==='brown hair') && document.querySelector('[data-profile-tags]').textContent.includes('brown hair'));
+    document.querySelector('[data-profile-prev]').click();await nextTurn();const previous=people.getChar(personKey).appearance.some(tag=>tag.en==='silver hair');document.querySelector('[data-profile-next]').click();await nextTurn();
+    check('可切回旧外貌方案再返回新版', previous && people.getChar(personKey).appearance.some(tag=>tag.en==='brown hair'));
+    check('外貌方案编辑器适配手机宽度', document.documentElement.scrollWidth<=window.innerWidth);
+    document.querySelector('[data-profile-preview]').click();await nextTurn();
+    check('试画入口使用选中的人物与最新标签', profilePreview.key===personKey && profilePreview.appearance.includes('brown hair'));
     return checks;
 };
 try {

@@ -916,6 +916,7 @@ export function createComicController(deps) {
         const task = { text: 'AI 正在把这一楼改编成漫画分镜…（用的是智库设置里的 AI）', current: snap.current };
         adapting.set(id, task); render(id);
         try {
+            if (deps.prepare) { await deps.prepare(id); if (!snap.current()) return; }
             const prevMsg = (c.chat || []).slice(0, id).reverse().find(m => m && !m.is_system && m.extra?.zhikuComicSrc);
             const before = prevMsg ? comicBlocks(srcOf(prevMsg)).slice(-1).map(b => b.inner).join('') : '';
             const layout = { panelStyle:opts().comicPanelStyle, gutter:opts().comicGutter, panels:opts().comicPanels || '' };

@@ -17,10 +17,14 @@ const backfill = runtime.slice(runtime.indexOf('// 只调度当前聊天'), runt
 const characters = fs.readFileSync(path.join(root, 'src/image-characters.js'), 'utf8').replace(/^export /gm, '');
 const illustration = runtime.slice(runtime.indexOf('// The entire editable instruction'), runtime.indexOf('function createIllustrationPlanner'));
 const illustrationEditor = runtime.slice(runtime.indexOf('function renderIllustrationEditor'), runtime.indexOf('function selectionTextMap'));
+const profiles = runtime.slice(runtime.indexOf('// 自动人物建档与外貌方案版本'), runtime.indexOf('// 只调度当前聊天'));
+const markers = runtime.slice(runtime.indexOf('// Marker-triggered generation'), runtime.indexOf('const pcLocal ='));
+const profileActions = runtime.slice(runtime.indexOf("case 'profile-open':"), runtime.indexOf("case 'casttab':", runtime.indexOf("case 'profile-open':")));
 const backfillAction = runtime.slice(runtime.indexOf("case 'image-backfill':"), runtime.indexOf("case 'comicbook':", runtime.indexOf("case 'image-backfill':")));
-const module = characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
+const module = characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
     + '\nfunction onBackfillClick(ev) { const ui = {view:"comic"}; switch(ev.target.dataset.act) {' + backfillAction + '} }'
-    + '\nexport { createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor };';
+    + '\nasync function profileAction(act,key) { const ui={charKey:key}; switch(act) {'+profileActions+'} }'
+    + '\nexport { createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction };';
 const html = fs.readFileSync(path.join(root, 'dev/comic-browser.html'), 'utf8');
 const server = http.createServer((request, response) => {
     const isModule = request.url === '/runtime-comic.js';
@@ -40,7 +44,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 35) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 42) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

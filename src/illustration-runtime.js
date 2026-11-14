@@ -4,7 +4,7 @@ import { parseImageMarkers, shiftImageRecords } from './marker-generation.js';
 import { locateSelectedText, selectedImageStory, selectionTextMap } from './selected-image.js';
 import { isComicReply } from './comic.js';
 
-export function createIllustrationPlanner({ getContext, getData, settings, roster, askLLM, pickJson, warn: notifyWarning, onRequest = () => {}, afterSave = () => {} }) {
+export function createIllustrationPlanner({ getContext, getData, settings, roster, askLLM, pickJson, warn: notifyWarning, onRequest = () => {}, afterSave = () => {}, prepare = null }) {
     let stopped = false;
     const seen = new WeakMap();
     const selectedBusy = new WeakSet();
@@ -40,6 +40,12 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
         if (!source.trim() || ((!manual || backfill) && parseImageMarkers(source,cfg.start,cfg.end).length)) return;
         const story = selection?selectedImageStory(source,cfg):imageStoryText(source);
         if (!story) return;
+        if (prepare) {
+            const chat=chatKey(c),swipe=msg.swipe_id;
+            await prepare(id);
+            const now=getContext();
+            if(stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return;
+        }
         const req = request('after', story,selection?.text), signature = String(msg.swipe_id) + source + req.system + req.user;
         if (!manual && seen.get(msg) === signature) return;
         if(!manual)seen.set(msg,signature);

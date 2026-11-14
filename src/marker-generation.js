@@ -32,7 +32,7 @@ export function shiftImageRecords(records, tokens, swipe, shifts) {
     for(const [old,key]of moves)next[key]=records[old];
     return next;
 }
-export function createMarkerController({context,getData,generate,upload,notify,document:doc=globalThis.document,resolveUrl=u=>u}) {
+export function createMarkerController({context,getData,generate,upload,notify,document:doc=globalThis.document,resolveUrl=u=>u,prepare=null}) {
     // 图存在本地浏览器时地址是 idb:xxx，要先换成能显示的地址；换不出来（存在别的设备上）就是空的
     function showUrl(url,apply,missing){Promise.resolve(resolveUrl(url)).then(u=>{if(u)apply(u);else missing?.();},()=>missing?.());}
     let queue=Promise.resolve(), stopped=false;
@@ -241,6 +241,7 @@ export function createMarkerController({context,getData,generate,upload,notify,d
         const c=context(),msg=c.chat?.[id],cfg=settings();
         if(stopped||!msg||(msg.is_system&&!(manual&&isComicReply(msg)))||(!manual&&(!cfg.auto||msg.is_user)))return 0;
         const source=String(msg.mes||''),swipe=msg.swipe_id,chat=chatKey(c),all=parseImageMarkers(source,cfg.start,cfg.end);
+        if(prepare&&all.length){await prepare(id);const now=context();if(stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return 0;}
         if(manual&&tokenIndex===null&&!Array.isArray(tokenIndices)&&all.length>1){notify('请点击具体提示词旁的生成按钮，一次只生成所选图片','info');decorate(id);return 0;}
         const selected=Array.isArray(tokenIndices)?all.filter((_,i)=>tokenIndices.includes(i)):tokenIndex===null?all:all.filter((_,i)=>i===tokenIndex);
         if(!selected.length){if(manual)notify('没有完整生图标记','info');return 0;}

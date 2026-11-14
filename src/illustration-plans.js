@@ -143,7 +143,9 @@ export function compileIllustrationPlan(plan, roster, story) {
     for (let person of plan.characters) {
         if (!person || typeof person.name !== 'string' || !person.name.trim() || /[$\n]/.test(person.name)) throw new Error('入画人物需要有效名字');
         // registered 只是模型的判断：在角色页找得到才算登记；找不到、没开、没写外貌都照样画
-        let char = person.registered === false ? null : resolveImageCharacters('$' + person.name + '-sfw-upperbody$', roster).picks[0]?.char;
+        const candidate = resolveImageCharacters('$' + person.name + '-sfw-upperbody$', roster).picks[0]?.char;
+        let char = person.registered === false && !candidate?.autoProfile ? null : candidate;
+        if (char?.autoProfile && !char.unregistered) person = { ...person, registered: true };
         if (char && !char.unregistered) cast.push(char);
         else { char = { name: person.name, appearance: [], outfits: [], outfitMode: 'story', negative: '', unregistered: true }; person = { ...person, registered: false }; }
         const identity = char.key || person.name.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
