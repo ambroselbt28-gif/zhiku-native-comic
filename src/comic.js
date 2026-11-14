@@ -377,6 +377,10 @@ const CSS = `
 .pc-cb-art{position:absolute;inset:0;overflow:hidden;background:#ece4d4}
 .pc-cb-art img{width:100%;height:100%;object-fit:contain;display:block;-webkit-user-drag:none}
 .pc-cb-art span{position:absolute;right:8px;bottom:6px;font:10px ui-monospace,Menlo,monospace;color:#3a2a22;background:rgba(244,239,228,.9);padding:1px 7px;border-radius:99px}
+.pc-cb-actions{position:absolute;left:8px;right:8px;bottom:28px;display:flex;flex-wrap:wrap;gap:4px}
+.pc-cb-actions .bb{min-width:0;height:40px;padding:0 8px;background:rgba(20,18,16,.88);color:#f4efe4;font-size:12px}
+.pc-cb-actions .bb:disabled{opacity:.55;cursor:wait}
+.pc-cb-status{position:absolute;left:8px;right:8px;bottom:74px;max-height:54px;overflow:auto;padding:5px 7px;border-radius:8px;background:rgba(20,18,16,.88);color:#f4efe4;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
 .pc-cb-spread{position:relative;width:min(96vw,calc((100vh - 220px) * 1.368));aspect-ratio:1664/1216;transform-style:preserve-3d}
 .pc-cb-spread::before{content:"";position:absolute;inset:-6px -10px -10px -10px;border-radius:8px;background:#3a2a22;box-shadow:0 18px 40px rgba(0,0,0,.6);transform:translateZ(-3px)}
 .pc-cb-lbase,.pc-cb-rbase{position:absolute;top:0;bottom:0;width:50%}
@@ -505,6 +509,11 @@ export function createComicController(deps) {
         };
     }
     const discard = url => { if (url) Promise.resolve().then(() => dropImage?.(url)).catch(() => {}); };
+    const redrawSeed = previous => {
+        let seed = Math.floor(Math.random() * 4294967294) + 1;
+        if (seed === Number(previous)) seed = seed % 4294967294 + 1;
+        return seed;
+    };
 
     async function generateOne(id, block, { inner, seed, batch } = {}) {
         if (isRedrawing(id) && redrawing.get(id) !== batch) return false;
@@ -571,9 +580,7 @@ export function createComicController(deps) {
                 for (const block of blocks) {
                     if (!snap.current()) break;
                     render(id);
-                    const previousSeed = Number(curVer(rec(snap.msg, block.key))?.seed);
-                    let seed = Math.floor(Math.random() * 4294967294) + 1;
-                    if (seed === previousSeed) seed = seed % 4294967294 + 1;
+                    const seed = redrawSeed(curVer(rec(snap.msg, block.key))?.seed);
                     const ok = await generateOne(id, block, { seed, batch: task });
                     if (!snap.current()) break;
                     task.completed++;
@@ -1012,7 +1019,7 @@ export function createComicController(deps) {
         let pages = collectPages();
         const urls = new Map();
         const url = async p => { if (!urls.has(p.url)) urls.set(p.url, await resolveUrl(p.url)); return urls.get(p.url); };
-        const art = p => `<div class="pc-cb-art"><img data-cb="${esc(p.url)}" alt="第 ${p.id} 楼第 ${p.page} 页" draggable="false">${p.caps || ''}<span>${p.id} 楼 · ${p.page}/${p.total}</span></div>`;
+        const art = p => `<div class="pc-cb-art" data-floor="${p.id}" data-key="${esc(p.key)}"><img data-cb="${esc(p.url)}" alt="第 ${p.id} 楼第 ${p.page} 页" draggable="false">${p.caps || ''}<div class="pc-cb-status" role="status" aria-live="polite" hidden></div><div class="pc-cb-actions"><button class="bb" data-bredraw="page" aria-label="重画第 ${p.id} 楼第 ${p.page} 页">重画本页</button><button class="bb" data-bredraw="floor" aria-label="保留分镜重画第 ${p.id} 楼全部 ${p.total} 页">整楼重画</button></div><span>${p.id} 楼 · ${p.page}/${p.total}</span></div>`;
         const fill = root => { for (const img of root.querySelectorAll('img[data-cb]:not([src])')) { const p = pages.find(x => x.url === img.dataset.cb); if (p) url(p).then(u => { if (u) img.src = u; }); } };
 
         const book = doc.createElement('div');
@@ -1109,6 +1116,21 @@ export function createComicController(deps) {
             if (!pages.length) { stage.innerHTML = '<div class="empty">这个聊天里还没有漫画页<br>点右上角「目录」，挑一楼点「画成漫画」；<br>也可以点楼层按钮里的 📖。<br><button class="bb wide" data-b="toc">打开目录选一楼</button></div>'; book.querySelector('footer').hidden = true; info(); return; }
             book.querySelector('footer').hidden = false;
             mode === 'book' ? buildBook() : mode === 'scroll' ? buildScroll() : buildFlow();
+            updateActions();
+        }
+        function updateActions() {
+            for (const art of stage.querySelectorAll('.pc-cb-art')) {
+                const id = Number(art.dataset.floor), key = art.dataset.key;
+                const busy = floorStatus(id).busy, task = isRedrawing(id) ? redrawing.get(id) : null;
+                const error = errors.get(`${id}:${key}`);
+                for (const button of art.querySelectorAll('[data-bredraw]')) {
+                    button.disabled = busy;
+                    if (button.dataset.bredraw === 'page') button.textContent = error ? '重试本页' : '重画本页';
+                }
+                const status = art.querySelector('.pc-cb-status');
+                status.textContent = task ? `整楼重画 · 第 ${Math.min(task.completed + 1, task.total)} / ${task.total} 页` : running.has(`${id}:${key}`) ? '正在重画本页…' : error || '';
+                status.hidden = !status.textContent;
+            }
         }
         function go(n) {
             if (!pages.length) return;
@@ -1122,7 +1144,7 @@ export function createComicController(deps) {
             pages = next;
             const selected = current ? pages.findIndex(page => page.id === current.id && page.key === current.key) : -1;
             at = selected >= 0 ? selected : Math.max(0, Math.min(at, pages.length - 1));
-            if (changed) build();
+            if (changed) build(); else updateActions();
             if (book.querySelector('.pc-comic-toc')) toc();
         };
         readers.add(refresh);
@@ -1154,7 +1176,11 @@ export function createComicController(deps) {
         };
         // 手势
         let sx = null, moved = false, drag = null;
-        stage.addEventListener('pointerdown', ev => { if (mode === 'scroll' || !pages.length) return; sx = ev.clientX; moved = false; drag = null; });
+        stage.addEventListener('pointerdown', ev => {
+            if (ev.target.closest('[data-bredraw]')) { sx = null; return; }
+            if (mode === 'scroll' || !pages.length) return;
+            sx = ev.clientX; moved = false; drag = null;
+        });
         stage.addEventListener('pointermove', ev => {
             if (sx == null) return;
             const dx = ev.clientX - sx;
@@ -1187,6 +1213,19 @@ export function createComicController(deps) {
         stage.addEventListener('pointerup', up);
         stage.addEventListener('pointercancel', () => { sx = null; if (mode === 'book') layoutBook(); else if (mode === 'flow') layoutFlow(); });
         book.addEventListener('click', ev => {
+            const redraw = ev.target.closest('[data-bredraw]');
+            if (redraw) {
+                ev.stopPropagation();
+                const art = redraw.closest('.pc-cb-art'), id = Number(art.dataset.floor);
+                if (floorStatus(id).busy) return;
+                if (redraw.dataset.bredraw === 'floor') void redrawAll(id);
+                else {
+                    const msg = getContext().chat?.[id];
+                    const block = comicBlocks(srcOf(msg)).find(block => block.key === art.dataset.key);
+                    if (block) void generateOne(id, block, { seed: redrawSeed(curVer(rec(msg, block.key))?.seed) });
+                }
+                return;
+            }
             const ad = ev.target.closest('[data-adapt]');
             if (ad) {
                 const id = Number(ad.dataset.adapt);

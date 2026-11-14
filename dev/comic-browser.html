@@ -236,6 +236,63 @@ window.stcrSelfTest = async () => {
     readerController.renderAll({ chatChanged: true });
     check('切换聊天时阅读器按原流程关闭', !reader.isConnected);
     readerController.stop();
+    const rerollMsg = { name: '重画角色', mes: page + '\n' + page.replace('cafe interior', 'library interior') };
+    const rerollContext = { chatId: 'reader-reroll', chat: [rerollMsg], saveChat: async () => {} };
+    const rerollRequests = [];
+    let rerollBarrier = null, rerollFails = false, storedImages = 0, rerollAiCalls = 0;
+    const rerollController = createComicController({ document, getContext: () => rerollContext, getData: () => ({ options: { comicOn: true } }), esc: escape,
+        askLLM: async () => { rerollAiCalls++; throw Error('重画应使用已存分镜'); },
+        generatePage: async request => {
+            rerollRequests.push(request);
+            if (rerollBarrier) await rerollBarrier;
+            if (rerollFails) throw Error('合成阅读器重画失败');
+            return { image, sent: { seed: request.seed } };
+        },
+        storeImage: async () => ({ url: image + '#reader-' + (++storedImages) }), resolveUrl: value => value, notify() {},
+    });
+    await rerollController.process(0, { manual: true });
+    await rerollController.openBook();
+    const rerollBook = document.querySelector('.pc-comic-book');
+    rerollBook.querySelector('[data-mode="flow"]').click();
+    const currentArt = () => rerollBook.querySelector('.pc-cb-card[data-k="1"] .pc-cb-art');
+    const targetKey = currentArt().dataset.key;
+    const versions = () => rerollMsg.extra.zhikuComic[targetKey].versions;
+    const source = rerollMsg.mes, originalUrl = versions()[0].url;
+    check('阅读器每张图片提供本页与整楼重画按钮', rerollBook.querySelectorAll('[data-bredraw="page"]').length === 2 && rerollBook.querySelectorAll('[data-bredraw="floor"]').length === 2);
+    let finishReroll;
+    rerollBarrier = new Promise(resolve => { finishReroll = resolve; });
+    const rerollButton = currentArt().querySelector('[data-bredraw="page"]');
+    rerollButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 20 }));
+    rerollButton.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 20 }));
+    rerollButton.click(); await nextTurn();
+    check('触摸重画按钮保持阅读模式并显示进度', rerollBook.querySelector('[data-mode="flow"]').classList.contains('on') && currentArt().querySelector('.pc-cb-status').textContent.includes('正在重画') && rerollButton.disabled);
+    rerollButton.click();
+    check('本页重画防止重复请求且等待时保留旧图', rerollRequests.length === 3 && currentArt().querySelector('img').dataset.cb === originalUrl && currentArt().querySelector('[data-bredraw="floor"]').disabled);
+    finishReroll(); rerollBarrier = null; await nextTurn();
+    check('阅读器本页重画沿用分镜并保存新种子和旧版', versions().length === 2 && Number.isSafeInteger(rerollRequests[2].seed) && rerollRequests[2].positive === rerollRequests[1].positive && rerollMsg.mes === source && rerollAiCalls === 0);
+    check('新图在当前阅读器内替换并恢复按钮', rerollBook.isConnected && currentArt().querySelector('img').dataset.cb === versions().at(-1).url && versions()[0].url === originalUrl && !currentArt().querySelector('[data-bredraw="page"]').disabled);
+    rerollBarrier = new Promise(resolve => { finishReroll = resolve; });
+    currentArt().querySelector('[data-bredraw="floor"]').click(); await nextTurn();
+    check('阅读器整楼重画显示页数并锁住重复操作', currentArt().querySelector('.pc-cb-status').textContent.includes('1 / 2') && currentArt().querySelector('[data-bredraw="floor"]').disabled);
+    finishReroll(); rerollBarrier = null; await nextTurn();
+    check('阅读器整楼重画完成两页并保留全部分镜', rerollRequests.length === 5 && versions().length === 3 && Object.values(rerollMsg.extra.zhikuComic).every(record => record.versions.length >= 2) && rerollMsg.mes === source && rerollAiCalls === 0);
+    const keptUrl = versions().at(-1).url;
+    rerollFails = true; currentArt().querySelector('[data-bredraw="page"]').click(); await nextTurn();
+    check('阅读器重画失败显示原因且保留成功图片', versions().length === 3 && currentArt().querySelector('img').dataset.cb === keptUrl && currentArt().querySelector('.pc-cb-status').textContent.includes('合成阅读器重画失败') && currentArt().querySelector('[data-bredraw="page"]').textContent === '重试本页');
+    rerollFails = false; currentArt().querySelector('[data-bredraw="page"]').click(); await nextTurn();
+    check('阅读器失败后可以直接重试完成', versions().length === 4 && rerollBook.isConnected && currentArt().querySelector('.pc-cb-status').hidden);
+    const artBounds = currentArt().getBoundingClientRect();
+    check('手机宽度下重画按钮位于图片区域内', [...currentArt().querySelectorAll('[data-bredraw]')].every(button => { const bounds = button.getBoundingClientRect(); return bounds.width > 0 && bounds.left >= artBounds.left && bounds.right <= artBounds.right; }));
+    rerollBook.querySelector('[data-mode="book"]').click();
+    const visibleRedraw = [...rerollBook.querySelectorAll('[data-bredraw="page"]')].find(button => {
+        const bounds = button.getBoundingClientRect();
+        return bounds.width > 0 && document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2) === button;
+    });
+    const readingPosition = rerollBook.querySelector('footer input').value;
+    visibleRedraw?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 20 }));
+    visibleRedraw?.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 20 }));
+    check('翻书模式按钮可触摸且不会触发翻页手势', !!visibleRedraw && rerollBook.querySelector('footer input').value === readingPosition);
+    rerollController.stop();
     return checks;
 };
 try {
