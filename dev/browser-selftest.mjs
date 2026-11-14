@@ -30,7 +30,19 @@ const module = referencePicker + '\nfunction pickCharacterReference(c,el,save) {
     + '\nasync function profileAction(act,key) { const ui={charKey:key}; switch(act) {'+profileActions+'} }'
     + '\nexport { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction };';
 const html = fs.readFileSync(path.join(root, 'dev/comic-browser.html'), 'utf8');
+const reloadEntry = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
+const reloadTest = fs.readFileSync(path.join(root, 'dev/update-reload-browser.js'), 'utf8');
+const reloadGuard = runtime.match(/    canReload: \(\) => ([^\n]+),\n/)?.[1];
+if (!reloadGuard) throw new Error('缺少正式重载空闲条件');
+let reloadModuleId = 0;
 const server = http.createServer((request, response) => {
+    if (request.url === '/reload-entry.js' || request.url === '/update-reload-browser.js' || request.url.startsWith('/runtime.js?')) {
+        response.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+        response.setHeader('Cache-Control', 'no-store');
+        response.end(request.url === '/reload-entry.js' ? reloadEntry : request.url === '/update-reload-browser.js' ? reloadTest :
+            `const id=${++reloadModuleId};export const runtimeVersion=String(id);export function createRuntime(){const DOC=document,__zhikuActivity={idle:()=>!globalThis.__reloadTest.busy};return{canReload:()=>${reloadGuard},async start(){globalThis.__reloadTest.starts.push(id);},async stop(){globalThis.__reloadTest.stops.push(id);}};}`);
+        return;
+    }
     const isModule = request.url === '/runtime-comic.js';
     response.setHeader('Content-Type', isModule ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8');
     response.end(isModule ? module : html);
@@ -44,11 +56,11 @@ try {
             '--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
             '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-gpu',
             '--disable-crash-reporter', '--disable-crashpad', '--user-data-dir=' + profile,
-            `--window-size=${width},900`, '--virtual-time-budget=5000', '--dump-dom', url,
+            `--window-size=${width},900`, '--virtual-time-budget=15000', '--dump-dom', url,
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 77) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 86) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

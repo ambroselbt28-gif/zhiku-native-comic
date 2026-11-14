@@ -1,4 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
+export const runtimeVersion = '0.8.60-native.14';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -8,6 +9,29 @@ function setTimeout(fn, delay, ...args) {
     timers.add(id); return id;
 }
 function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
+function createReloadActivity({ now = Date.now, quietMs = 3000 } = {}) {
+    let count = 0, changed = now();
+    return {
+        idle: () => count === 0 && now() - changed >= quietMs,
+        wrap(target) {
+            for (const [key, original] of Object.entries(target)) {
+                if (typeof original !== 'function') continue;
+                target[key] = function (...args) {
+                    const result = original.apply(this, args);
+                    if (result && typeof result.then === 'function') {
+                        count++; changed = now();
+                        const finish = () => { count--; changed = now(); };
+                        Promise.resolve(result).then(finish, finish);
+                    }
+                    return result;
+                };
+            }
+            return target;
+        },
+    };
+}
+
+const __zhikuActivity = createReloadActivity();
 
 // 自动人物建档与外貌方案版本，只写智库角色库和插件选项。
 const AUTO_PROFILE_PROMPT = `你为当前正文中新出场的人物建立画图用的外貌档案。
@@ -2314,7 +2338,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.13（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.14（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2363,7 +2387,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.13';
+globalThis.__PC_VERSION = '0.8.60-native.14';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -13420,9 +13444,10 @@ async function start() {
         DOC.getElementById('zhiku-extension-settings')?.remove();
         const panel = DOC.createElement('div');
         panel.id = 'zhiku-extension-settings';
-        panel.innerHTML = '<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>智库</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><label class="checkbox_label" style="display:flex;padding:12px 0;font-weight:600"><input type="checkbox" data-zhiku="auto"><span>开启标记自动生图</span></label><div class="inline-drawer-content"><p>画师库、生图与共享上传</p><div class="flex-container flexGap5"><button type="button" class="menu_button" data-zhiku="open">打开智库</button><button type="button" class="menu_button" data-zhiku="switch">切换画师串</button></div></div></div>';
+        panel.innerHTML = '<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>智库</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><label class="checkbox_label" style="display:flex;padding:12px 0;font-weight:600"><input type="checkbox" data-zhiku="auto"><span>开启标记自动生图</span></label><div class="inline-drawer-content"><p>画师库、生图与共享上传</p><div class="flex-container flexGap5"><button type="button" class="menu_button" data-zhiku="open">打开智库</button><button type="button" class="menu_button" data-zhiku="switch">切换画师串</button><button type="button" class="menu_button" data-zhiku="reload">重载智库</button></div></div></div>';
         panel.querySelector('[data-zhiku="open"]').addEventListener('click', () => UI.openWindow());
         panel.querySelector('[data-zhiku="switch"]').addEventListener('click', () => UI.openSwitcher());
+        panel.querySelector('[data-zhiku="reload"]').addEventListener('click', () => globalThis.__zhikuRequestReload?.());
         const autoToggle=panel.querySelector('[data-zhiku="auto"]');
         const syncAuto=()=>{autoToggle.checked=getData().options.markerAuto !== false;};
         syncAuto();
@@ -13442,6 +13467,7 @@ return {
     start,
     async stop() {
         if (globalThis.__zhikuDl) { DOC.removeEventListener('click', globalThis.__zhikuDl, true); delete globalThis.__zhikuDl; }
+        ownCleanup?.();
         __mod_store.detach();
         await __mod_store.flush();
         await __mod_store.flushLogs();
@@ -13451,9 +13477,20 @@ return {
     }
 };
 })();
+
+const __zhikuWrapFactory = make => (...args) => __zhikuActivity.wrap(make(...args));
+createAutoCharacterProfiles = __zhikuWrapFactory(createAutoCharacterProfiles);
+createIllustrationPlanner = __zhikuWrapFactory(createIllustrationPlanner);
+createComicController = __zhikuWrapFactory(createComicController);
+createImageBackfill = __zhikuWrapFactory(createImageBackfill);
+for (const mod of [__mod_nai, __mod_engine, __mod_translate, __mod_marker, __mod_store, __mod_chars, __mod_lobby]) __zhikuActivity.wrap(mod);
 return {
+    canReload: () => __zhikuActivity.idle() && !DOC.querySelector('#pc-root.open, .pc-sheet-backdrop, .pc-modal-backdrop, .pc-viewer, .pc-image-preview, .pc-comic-book'),
     start: () => __mod_script_entry.start(),
     async stop() {
+        stopped = true;
+        for (const id of timers) window.clearTimeout(id);
+        timers.clear();
         try { await __mod_script_entry.stop(); }
         finally { globalThis.__zhikuInputCleanup?.(); delete globalThis.__zhikuInputCleanup; DOC.getElementById('pc-comfy-css')?.remove(); DOC.getElementById('pc-toasts')?.remove(); for (const id of timers) window.clearTimeout(id); timers.clear(); stopped = true; __mod_translate.stopFetch(); }
     }

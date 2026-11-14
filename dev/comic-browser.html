@@ -315,6 +315,8 @@ window.stcrSelfTest = async () => {
     visibleRedraw?.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 20 }));
     check('翻书模式按钮可触摸且不会触发翻页手势', !!visibleRedraw && rerollBook.querySelector('footer input').value === readingPosition);
     rerollController.stop();
+    const { testUpdateReload } = await import('./update-reload-browser.js');
+    await testUpdateReload(check);
     return checks;
 };
 try {
