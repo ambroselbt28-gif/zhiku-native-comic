@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
+import { createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
     if (!value) throw new Error(name);
@@ -181,6 +181,23 @@ window.stcrSelfTest = async () => {
     check('外貌方案编辑器适配手机宽度', document.documentElement.scrollWidth<=window.innerWidth);
     document.querySelector('[data-profile-preview]').click();await nextTurn();
     check('试画入口使用选中的人物与最新标签', profilePreview.key===personKey && profilePreview.appearance.includes('brown hair'));
+    // 在真实 iframe 和 AbortController 上验证联网控制，接口由合成回复代替。
+    let networkFrame, cleanRequests = 0, pageRequests = 0, hangingSignal;
+    const naiNetwork = createNaiNetwork({
+        document: { createElement: tag => document.createElement(tag), body: { appendChild(frame) {
+            document.body.appendChild(frame); networkFrame = frame;
+            frame.contentWindow.fetch = async () => { cleanRequests++; return new Response('{}'); };
+        } } },
+        pageFetch: async () => { pageRequests++; return new Response('{}'); },
+    });
+    await naiNetwork.fetch('https://image.novelai.net/user/subscription');
+    check('官方请求绑定独立真实 iframe 的 fetch', cleanRequests === 1 && pageRequests === 0 && networkFrame.isConnected);
+    await naiNetwork.fetch('/api/test');
+    check('宿主 API 继续使用原页面联网', pageRequests === 1);
+    try { await naiNetwork.run(signal => { hangingSignal = signal; return new Promise(() => {}); }, { timeout: 25 }); }
+    catch (error) { check('等待中的请求超时会中断并标为可重试', error.retryableNetwork && hangingSignal.aborted); }
+    naiNetwork.stop();
+    check('停用后移除独立联网 iframe', !networkFrame.isConnected);
     return checks;
 };
 try {

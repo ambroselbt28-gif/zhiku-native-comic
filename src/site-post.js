@@ -15,12 +15,13 @@ async function sitePost(path,init,info={}) {
     for(let i=0;i<list.length;i++){
         if(siteStopped||init.signal?.aborted)throw Object.assign(new Error('生图已停止'),{name:'AbortError'});
         const url=list[i],more=i<list.length-1;let r;
+        Object.assign(info, { url, stage: '等待服务器响应' });
         try{r=await http(url,init);}catch(e){
             if(siteStopped||e?.name==='AbortError'||init.signal?.aborted||!more)throw e;
             tried.push(url+' 连不上');continue;
         }
         const type=(r.headers?.get?.('content-type')||'').toLowerCase();
-        Object.assign(info,{url,status:r.status,type,tried:[...tried]});
+        Object.assign(info,{url,status:r.status,type,tried:[...tried],stage:'读取响应数据'});
         // Address fallback is for a missing endpoint or an HTML landing page.
         // Auth, rate limits and server failures retain their own bounded queue handling.
         if(more&&((r.ok&&type.includes('text/html'))||[404,405].includes(r.status))){
@@ -34,5 +35,5 @@ async function sitePost(path,init,info={}) {
     throw new Error('站点连不上');
 }
 function siteResponseText(r) {
-    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):''].filter(Boolean).join(' · ');
+    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):'',r.stage||'',r.transport||''].filter(Boolean).join(' · ');
 }

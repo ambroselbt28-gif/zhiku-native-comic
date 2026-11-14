@@ -29,10 +29,12 @@ function naiRequestSnapshot(value, key = '', image = false) {
 function generate(opts) {
     opts={...opts,src:opts.src || '其他生图入口'};
     const cfg=settings(),nai=opts.backend!=='comfy'&&cfg.naiMode!=='gpt';
+    // 同一张图在重试时继续使用同一随机种子。
+    if (nai && cfg.naiMode === 'key' && !(Number(opts.seed) > 0)) opts.seed = Number(cfg.novelai_seed) > 0 ? Number(cfg.novelai_seed) : randomSeed();
     const divided=nai&&cfg.naiMode!=='tavern'&&(opts.comic||cfg.novelaimode!=='nai-diffusion-3')&&!(cfg.naiMode==='site'&&String(cfg.naiSiteSimple)==='true'&&!opts.comic);
     const chars=divided?normalizeNaiChars(opts.chars, opts.comic):[];
     if(divided)opts.chars=chars;
-    return __naiGate.run(()=>generateRequest(opts),{retryServer:nai}).catch(async error=>{
+    return __naiGate.run(()=>generateRequest(opts),{retryServer:nai,retryNetwork:nai&&cfg.naiMode==='key'}).catch(async error=>{
         // 漫画的逐格人物结构在服务器重试时保持完整。
         if(!opts.comic&&error?.name!=='AbortError'&&error?.status>=500&&error.status<=504&&chars.length){
             globalThis.__zkLog?.('生图降级',`分人物请求连续返回 ${error.status}，合并 ${chars.length} 个人物的提示词后再试`);

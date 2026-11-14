@@ -34,7 +34,14 @@ let before=calls.length;responses=Array.from({length:6},()=>({status:500}));awai
 for(const status of [400,401,402]){before=calls.length;responses=[{status}];await assert.rejects(()=>N.generate(opts));assert.equal(calls.length-before,1);}
 for(const status of [404,405]){before=calls.length;responses=[{status},{status}];await assert.rejects(()=>N.generate(opts));assert.equal(calls.length-before,2);}
 before=calls.length;responses=[new TypeError('network failed'),new TypeError('network failed')];await assert.rejects(()=>N.generate(opts));assert.equal(calls.length-before,2);
-config.naiMode='key';config.naiKey='fixture-key';before=calls.length;responses=[new TypeError('network failed')];await assert.rejects(()=>N.generate(opts));assert.equal(calls.length-before,1);config.naiMode='site';
+config.naiMode='key';config.naiKey='fixture-key';before=calls.length;responses=Array.from({length:3},()=>new TypeError('network failed'));await assert.rejects(()=>N.generate(opts));assert.equal(calls.length-before,3);assert(calls.slice(before).every(call=>call.body.parameters.seed===calls[before].body.parameters.seed));config.naiMode='site';
+// 随机种子也在首发前确定，网络恢复时继续画同一方案。
+config.naiMode='key';config.novelai_seed=0;before=calls.length;
+responses=[new TypeError('Failed to fetch'),{status:200}];
+await N.generate({...opts,seed:0});
+assert.equal(calls.length-before,2);
+assert.equal(calls[before].body.parameters.seed,calls[before+1].body.parameters.seed);
+config.naiMode='site';config.novelai_seed=123;
 before=calls.length;responses=[{status:504},{status:504},{status:504}];await assert.rejects(()=>N.generate({...opts,chars:[]}));assert.equal(calls.length-before,3);
 // Tavern transport logs its own body, which does not contain divided-character parameters.
 config.naiMode='tavern';before=calls.length;responses=[{status:500},{status:500},{status:500}];await assert.rejects(()=>N.generate({positive:'tavern input',chars:opts.chars}));assert.equal(calls.length-before,3);assert.equal(calls.at(-1).body.parameters,undefined);assert(logs.filter(l=>l[0]==='生图失败').at(-1)[2].includes('"prompt": "tavern input"'));

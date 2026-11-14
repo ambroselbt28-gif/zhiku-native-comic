@@ -2220,7 +2220,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.54-native.8（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.54-native.9（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2269,7 +2269,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.54-native.8';
+globalThis.__PC_VERSION = '0.8.54-native.9';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3337,7 +3337,74 @@ const saveSettingsDebounced = __shim.saveSettingsDebounced;
 const extension_settings = new Proxy({}, { get: (_, k) => { const v = __shim.extension_settings[k]; return typeof v === 'function' ? v.bind(__shim.extension_settings) : v; }, set: (_, k, v) => { __shim.extension_settings[k] = v; return true; } });
 const KEY = 'piaoce_nai';
 /** 脚本版跑在 iframe 里，用酒馆页面的 fetch */
-const http = (...a) => (globalThis.__pcFetch || fetch)(...a);
+// 官方请求使用独立 fetch，避免页面上的请求包装器干扰，并覆盖整个响应读取过程。
+function createNaiNetwork({ document, pageFetch, Controller = globalThis.AbortController, schedule = (...args) => setTimeout(...args), unschedule = id => clearTimeout(id) } = {}) {
+    let frame = null, cleanFetch = null, stopped = false;
+    const pending = new Set();
+    const abortError = () => Object.assign(new Error('生图已停止'), { name: 'AbortError' });
+    function officialFetch(input, init) {
+        if (stopped) throw abortError();
+        const official = /^https:\/\/image\.novelai\.net(?:\/|$)/i.test(String(input?.url ?? input));
+        if (!official) return pageFetch(input, init);
+        if (frame && !frame.isConnected) { frame = null; cleanFetch = null; }
+        if (!cleanFetch && document) {
+            let candidate;
+            try {
+                candidate = document.createElement('iframe');
+                candidate.setAttribute('aria-hidden', 'true');
+                candidate.tabIndex = -1;
+                candidate.style.cssText = 'display:none!important';
+                (document.body || document.documentElement).appendChild(candidate);
+                const child = candidate.contentWindow;
+                if (typeof child?.fetch !== 'function') throw Error('fetch unavailable');
+                cleanFetch = child.fetch.bind(child);
+                frame = candidate;
+            } catch { candidate?.remove(); }
+        }
+        return (cleanFetch || pageFetch)(input, init);
+    }
+    async function run(task, { timeout = 240000, signal } = {}) {
+        if (stopped || signal?.aborted) throw abortError();
+        if (typeof Controller !== 'function') return task(signal);
+        const controller = new Controller();
+        let timedOut = false;
+        const cancel = () => controller.abort(signal?.reason || abortError());
+        const timer = schedule(() => { timedOut = true; controller.abort(); }, timeout);
+        let onAbort;
+        const interrupted = new Promise((resolve, reject) => {
+            onAbort = () => reject(abortError());
+            controller.signal.addEventListener('abort', onAbort, { once: true });
+        });
+        pending.add(controller);
+        signal?.addEventListener('abort', cancel, { once: true });
+        try { return await Promise.race([task(controller.signal), interrupted]); }
+        catch (error) {
+            if (stopped || signal?.aborted) throw abortError();
+            if (timedOut) throw Object.assign(new Error(`NovelAI 请求超时（${Math.round(timeout / 1000)} 秒）`), { retryableNetwork: true, status: 0 });
+            throw error;
+        } finally {
+            unschedule(timer);
+            pending.delete(controller);
+            controller.signal.removeEventListener('abort', onAbort);
+            signal?.removeEventListener('abort', cancel);
+        }
+    }
+    return {
+        fetch: officialFetch, run,
+        kind: () => cleanFetch ? '独立浏览器 fetch' : '页面 fetch',
+        stop() {
+            stopped = true;
+            for (const controller of pending) controller.abort(abortError());
+            frame?.remove(); frame = null; cleanFetch = null;
+        },
+    };
+}
+
+const naiNetwork = createNaiNetwork({
+    document: typeof DOC === 'undefined' ? null : DOC,
+    pageFetch: (...args) => (globalThis.__pcFetch || fetch)(...args),
+});
+const http = (...args) => naiNetwork.fetch(...args);
 
 const MODELS = [
     ['nai-diffusion-4-5-full', 'NAI Diffusion 4.5 Full'],
@@ -3525,12 +3592,13 @@ async function sitePost(path,init,info={}) {
     for(let i=0;i<list.length;i++){
         if(siteStopped||init.signal?.aborted)throw Object.assign(new Error('生图已停止'),{name:'AbortError'});
         const url=list[i],more=i<list.length-1;let r;
+        Object.assign(info, { url, stage: '等待服务器响应' });
         try{r=await http(url,init);}catch(e){
             if(siteStopped||e?.name==='AbortError'||init.signal?.aborted||!more)throw e;
             tried.push(url+' 连不上');continue;
         }
         const type=(r.headers?.get?.('content-type')||'').toLowerCase();
-        Object.assign(info,{url,status:r.status,type,tried:[...tried]});
+        Object.assign(info,{url,status:r.status,type,tried:[...tried],stage:'读取响应数据'});
         // Address fallback is for a missing endpoint or an HTML landing page.
         // Auth, rate limits and server failures retain their own bounded queue handling.
         if(more&&((r.ok&&type.includes('text/html'))||[404,405].includes(r.status))){
@@ -3544,7 +3612,7 @@ async function sitePost(path,init,info={}) {
     throw new Error('站点连不上');
 }
 function siteResponseText(r) {
-    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):''].filter(Boolean).join(' · ');
+    return [r.url,r.status?'HTTP '+r.status:'',r.type||'',r.size?(r.size>=1024?Math.round(r.size/1024)+'KB':r.size+' 字节'):'',r.format||'',r.entries?.length?'包里：'+r.entries.join('、'):'',r.tried?.length?'先试过：'+r.tried.join('；'):'',r.stage||'',r.transport||''].filter(Boolean).join(' · ');
 }
 
 function authKey() {
@@ -3558,24 +3626,37 @@ function authKey() {
  * 生成一张图，返回 data:image/png;base64,...
  * 同时返回实际发送的内容 sent，给界面展示
  */
-function createNaiGate({sleep=ms=>new Promise(r=>setTimeout(r,ms)),now=()=>Date.now(),notice=()=>{},gap=1500}={}) {
- let queue=Promise.resolve(),next=0,stopped=false;
- let wake;const stopping=new Promise(resolve=>{wake=resolve;});
- return {stop(){stopped=true;wake();},run(fn,{retryServer=true}={}){const job=queue.then(async()=>{
-  for(let attempt=0;;attempt++){
-   if(stopped)throw new Error('生图已停止');
-   const delay=next-now();if(delay>0)await Promise.race([sleep(delay),stopping]);
-   if(stopped)throw new Error('生图已停止');
-   try{return await fn();}
-   catch(e){if(e?.name==='AbortError'||(e.status!==429&&!(retryServer&&(e.retryable||(e.status>=500&&e.status<=504))))||attempt>=2)throw e;
-    const seconds=Number(e.retryAfter),date=Date.parse(e.retryAfter);
-    const retry=Number.isFinite(seconds)&&seconds>0?seconds*1000:Number.isFinite(date)?Math.max(0,date-now()):0;
-    next=now()+Math.max(retry,5000*2**attempt);const wait=Math.ceil((next-now())/1000);
-    notice(e.status===429?'请求受到限流（共享账号可能有人同时在用），等待 '+wait+' 秒后重试':'NovelAI 服务器返回 '+e.status+'，等待 '+wait+' 秒后重试');
-    globalThis.__zkLog?.('生图重试',(e.status===429?'限流 429':'服务器 '+e.status)+' · 第 '+(attempt+1)+' 次重试，等 '+wait+' 秒');
-   }finally{next=Math.max(next,now()+gap);}
-  }
- });queue=job.catch(()=>{});return job;}};
+function createNaiGate({ sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = () => Date.now(), notice = () => {}, gap = 1500 } = {}) {
+    let queue = Promise.resolve(), next = 0, stopped = false;
+    let wake;
+    const stopping = new Promise(resolve => { wake = resolve; });
+    function stop() { stopped = true; wake(); }
+    function run(fn, { retryServer = true, retryNetwork = false } = {}) {
+        const job = queue.then(async () => {
+            for (let attempt = 0; ; attempt++) {
+                if (stopped) throw new Error('生图已停止');
+                const delay = next - now();
+                if (delay > 0) await Promise.race([sleep(delay), stopping]);
+                if (stopped) throw new Error('生图已停止');
+                try { return await fn(); }
+                catch (error) {
+                    const network = retryNetwork && !error.status && (error.retryableNetwork || (error.name === 'TypeError' && /fetch|network|load failed/i.test(error.message || '')));
+                    const server = retryServer && (error.retryable || (error.status >= 500 && error.status <= 504));
+                    if (error.name === 'AbortError' || (!network && error.status !== 429 && !server) || attempt >= 2) throw error;
+                    const seconds = Number(error.retryAfter), date = Date.parse(error.retryAfter);
+                    const retry = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : Number.isFinite(date) ? Math.max(0, date - now()) : 0;
+                    next = now() + Math.max(retry, 5000 * 2 ** attempt);
+                    const wait = Math.ceil((next - now()) / 1000);
+                    const reason = network ? '网络连接中断或超时' : error.status === 429 ? '请求受到限流' : 'NovelAI 服务器返回 ' + error.status;
+                    notice(reason + '，等待 ' + wait + ' 秒后重试（' + (attempt + 1) + '/2）');
+                    globalThis.__zkLog?.('生图重试', reason + ' · 第 ' + (attempt + 1) + ' 次重试，等 ' + wait + ' 秒');
+                } finally { next = Math.max(next, now() + gap); }
+            }
+        });
+        queue = job.catch(() => {});
+        return job;
+    }
+    return { stop, run };
 }
 
 const __naiGate=createNaiGate({notice:message=>toastr.info(message,'智库 · 生图排队')});
@@ -3617,10 +3698,12 @@ function naiRequestSnapshot(value, key = '', image = false) {
 function generate(opts) {
     opts={...opts,src:opts.src || '其他生图入口'};
     const cfg=settings(),nai=opts.backend!=='comfy'&&cfg.naiMode!=='gpt';
+    // 同一张图在重试时继续使用同一随机种子。
+    if (nai && cfg.naiMode === 'key' && !(Number(opts.seed) > 0)) opts.seed = Number(cfg.novelai_seed) > 0 ? Number(cfg.novelai_seed) : randomSeed();
     const divided=nai&&cfg.naiMode!=='tavern'&&(opts.comic||cfg.novelaimode!=='nai-diffusion-3')&&!(cfg.naiMode==='site'&&String(cfg.naiSiteSimple)==='true'&&!opts.comic);
     const chars=divided?normalizeNaiChars(opts.chars, opts.comic):[];
     if(divided)opts.chars=chars;
-    return __naiGate.run(()=>generateRequest(opts),{retryServer:nai}).catch(async error=>{
+    return __naiGate.run(()=>generateRequest(opts),{retryServer:nai,retryNetwork:nai&&cfg.naiMode==='key'}).catch(async error=>{
         // 漫画的逐格人物结构在服务器重试时保持完整。
         if(!opts.comic&&error?.name!=='AbortError'&&error?.status>=500&&error.status<=504&&chars.length){
             globalThis.__zkLog?.('生图降级',`分人物请求连续返回 ${error.status}，合并 ${chars.length} 个人物的提示词后再试`);
@@ -3980,17 +4063,20 @@ async function generateRequest(opts) {
     });
     let naiSent=null;const responseInfo={};
     try {
-        const r = await generateRequestInner(opts, body=>{try{
+        const official = opts.backend !== 'comfy' && s0.naiMode === 'key';
+        const send = signal => generateRequestInner(signal ? { ...opts, signal } : opts, body=>{try{
             naiSent=naiRequestSnapshot(body);
             if(opts.comic)globalThis.__zkLog?.('漫画请求',body.model+' · 原生整页 · '+(body.parameters?.v4_prompt?.caption?.char_captions?.length||0)+' 条人物提示',JSON.stringify(naiSent,null,1));
         }catch{}},responseInfo);
+        const r = official ? await naiNetwork.run(send, { signal: opts.signal }) : await send(opts.signal);
         globalThis.__zkLog?.('生图', `成功 · ${((Date.now() - t0) / 1000).toFixed(1)} 秒 · ${(opts.chars || []).length ? (opts.chars.length + ' 个人物') : '没分人物'}${opts.director?.length ? ' · 带角色参考 ' + opts.director.length + ' 张' : ''}`, brief());
         return r;
     } catch (e) {
+        responseInfo.transport = s0.naiMode === 'key' ? naiNetwork.kind() : '';
         const b=brief();
         const json=naiSent?JSON.stringify(naiSent,null,1):'';
         const detail=json?'实际发送的 NovelAI 请求（图片与缓存凭据已省略）：\n'+json.slice(0,10000)+(json.length>10000?'\n[参数记录超过 10000 字，已截断]':'')+'\n来源：'+logSource+'\n返回：'+siteResponseText(responseInfo):b;
-        globalThis.__zkLog?.('生图失败',(e.message || String(e))+(e.status?' · HTTP '+e.status:''),detail);
+        globalThis.__zkLog?.('生图失败',(e.message || String(e))+' · '+((Date.now()-t0)/1000).toFixed(1)+' 秒'+(e.status?' · HTTP '+e.status:''),detail);
         throw e;
     }
 }
@@ -4051,10 +4137,11 @@ async function generateRequestInner(opts, recordNai = () => {}, responseInfo = {
     const r = await sitePost('/ai/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: '*/*', ...(key ? { Authorization: 'Bearer ' + key } : {}) },
-        body: JSON.stringify(body),
+        body: JSON.stringify(body), signal: opts.signal,
     },responseInfo);
     const buf = new Uint8Array(await r.arrayBuffer());
     if (!r.ok) throw Object.assign(new Error(explain(r.status, new TextDecoder().decode(buf))),{status:r.status,retryAfter:r.headers?.get('Retry-After')});
+    responseInfo.stage = '解析图片';
     try{return {image:await imageFromResponse(buf,responseInfo),sent};}catch(e){siteForget('/ai/generate-image');throw e;}
 }
 
@@ -4242,10 +4329,12 @@ async function testConnection() {
             return { ok: true, text: '第三方站点没法提前检查，直接去生图页试一张' };
         }
         const key = authKey();
-        const r = await http('https://image.novelai.net/user/subscription', { headers: { Authorization: 'Bearer ' + key } });
-        if (r.status === 401) return { ok: false, text: 'key 不对' };
-        if (!r.ok) return { ok: false, text: `NovelAI 返回 ${r.status}` };
-        return { ok: true, text: '能用' + anlasText(await r.json()) };
+        return await naiNetwork.run(async signal => {
+            const r = await http('https://image.novelai.net/user/subscription', { headers: { Authorization: 'Bearer ' + key }, signal });
+            if (r.status === 401) return { ok: false, text: 'key 不对' };
+            if (!r.ok) return { ok: false, text: `NovelAI 返回 ${r.status}` };
+            return { ok: true, text: '能用' + anlasText(await r.json()) };
+        }, { timeout: 15000 });
     } catch (e) {
         // 连接测试使用图像服务的订阅接口，网络异常时明确标为验证失败。
         if (s.naiMode === 'key' && e instanceof TypeError) return { ok: false, text: '连接测试失败：无法完成 image.novelai.net 的订阅查询（' + e.message + '）。Key 和生图状态尚待验证，请检查 TT 的联网或代理设置' };
@@ -4386,7 +4475,7 @@ async function inpaintRequest({ image, mask, prompt, negative, width, height, st
     return imageFromResponse(buf);
 }
 
-return { comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
+return { comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();naiNetwork.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
 })();
 
 // ───── engine.js ─────
