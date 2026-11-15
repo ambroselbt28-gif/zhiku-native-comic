@@ -38,6 +38,10 @@ for(const [label,code] of [['源码',source],['发布代码',generated]]) {
     assert.ok(req.positive.includes('Character C1 is one recurring person'));
     assert.ok(req.positive.includes('Main characters in this panel: Character C1, Character C2.'));
     assert.equal(req.chars.length,6);
+    assert(!req.chars[0].prompt.includes('smartphone screen'),'场景只放在 base，不自动重复到人物提示');
+    assert(req.positive.includes('smartphone screen'),'删除重复不丢失共同场景');
+    const sceneSequence=code.parseComicPage(page.replace('top left, medium close-up, cafe interior','top left, medium close-up, cafe interior\nThe woman looks at a cup, then looks at the man.').replace('one foot kicking suitcase, then turning around','holding a cup'));
+    assert(code.comicGroundingWarnings(sceneSequence).some(w=>w.includes('第 2 格混入先后动作')),'场景段也校验连续动作');
     for(const character of req.chars) {
         assert.match(character.prompt,/^This character appears in panel \d \(P\d\) only\./);
         assert.match(character.prompt,/\nCharacter C\d\.\n/);
@@ -77,6 +81,8 @@ for(const [label,code] of [['源码',source],['发布代码',generated]]) {
     const llm=code.adaptRequest('合成剧情',{extra:'保留我选择的画风'});
     assert.ok(llm.system.includes('每格只定格一个动作阶段'));
     assert.ok(llm.system.includes('不要只写 watching calmly'));
+    assert.ok(llm.system.includes('禁止复制整段双人剧情'));
+    assert.ok(llm.system.includes('姓名与编号的对应'));
     assert.ok(llm.user.includes('保留我选择的画风'));
     const rewrite=code.rewriteRequest('<image>'+page+'</image>',1,'',{story:'合成原文：人物把手机交给同伴。'});
     assert.ok(rewrite.system.includes('手机屏幕特写'));

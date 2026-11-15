@@ -224,7 +224,7 @@ window.stcrSelfTest = async () => {
     check('不用参考仍可选择且原图未改动', refChar.charRef==='' && refSaves===2 && JSON.stringify(refData.charRefGroups)===refImages);
     check('参考折叠选择器不超出手机宽度', refBox.getBoundingClientRect().right<=window.innerWidth);
     refBox.remove();
-    check('漫画设置显示完整分镜和留白选择', document.querySelector('[data-clayout="comicPanelStyle"]').options.length === 8 && document.querySelector('[data-clayout="comicGutter"]').options.length === 5);
+    check('漫画设置移除分镜与留白模板', !document.querySelector('[data-clayout]') && document.querySelector('#settings').textContent.includes('按剧情自由编排'));
     const cfgInput=()=>document.querySelector('[data-comic-cfg]');
     const setComicCfg=value=>{const input=cfgInput();input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}));};
     check('漫画 CFG 默认留空跟随', cfgInput().value==='' && data.options.comicCfg===undefined);
@@ -234,15 +234,14 @@ window.stcrSelfTest = async () => {
     setComicCfg('11');check('漫画 CFG 拒绝越界并保留原值',data.options.comicCfg===5.5 && !cfgInput().checkValidity());
     setComicCfg('');check('清空漫画 CFG 恢复跟随',data.options.comicCfg===undefined && cfgInput().checkValidity());
     data.options.comicPanels = '1–2';
-    const setLayout = (key, value) => { const select=document.querySelector(`[data-clayout="${key}"]`);select.value=value;select.dispatchEvent(new Event('change',{bubbles:true})); };
-    setLayout('comicPanelStyle','yonkoma'); setLayout('comicGutter','boxed');
-    check('经典四格接管格数并保存留白选择', data.options.comicPanelStyle === 'yonkoma' && data.options.comicGutter === 'boxed' && !document.querySelector('[data-cs="comicPanels"]'));
-    aiResponse = comicLayoutExample({panelStyle:'yonkoma'}).replaceAll('comic page,','white border, comic page,');
+    data.options.comicPanelStyle='yonkoma'; data.options.comicGutter='boxed';
+    check('旧四格设置不再接管每页格数', !!document.querySelector('[data-cs="comicPanels"]'));
+    aiResponse = comicLayoutExample();
     context.chat[83] = {name:'合成角色',mes:'角色在咖啡馆等雨，之后离开咖啡馆。'};
     const fourRow=document.createElement('div');fourRow.className='mes';fourRow.setAttribute('mesid','83');fourRow.innerHTML='<div class="mes_text">合成四格故事</div>';document.querySelector('#chat').append(fourRow);
     await controller.adapt(83);
-    check('分镜与留白进入实际 AI 请求', aiRequests.at(-1).system.includes('所选分镜风格为「经典四格」') && aiRequests.at(-1).system.includes('所选留白方案为「全封闭内框」') && aiRequests.at(-1).user.includes('每页 4 格'));
-    check('经典四格经过编译出多张漫画页', fourRow.querySelectorAll('.pc-comic-page').length === 2 && requests.at(-1).positive.includes('4 panels') && requests.at(-1).positive.includes('white border'));
+    check('自由分镜进入实际 AI 请求', aiRequests.at(-1).system.includes('按剧情自由分镜') && !aiRequests.at(-1).system.includes('所选分镜风格') && aiRequests.at(-1).user.includes('每页 1–2 格'));
+    check('自由分镜编译多页且保留不同格数', fourRow.querySelectorAll('.pc-comic-page').length===2 && requests.at(-1).positive.includes('1 panel'));
     fourRow.querySelector('img').click();fourRow.querySelector('[data-cwork]').click();
     check('本页编辑器说明重画与 AI 修分镜的区别', document.querySelector('.pc-comic-work').textContent.includes('会调用漫画改编 AI 并重新生图'));
     const groundingEditor=document.querySelector('[data-w-text]'),cleanDraft=groundingEditor.value;
@@ -252,9 +251,9 @@ window.stcrSelfTest = async () => {
     check('修正草稿后分镜提示及时消失', document.querySelector('[data-w-check]').textContent==='');
     document.querySelector('[data-w="ai"]').click();await nextTurn();
     check('AI 重写带原文与镜头动作校对规则', aiRequests.at(-1).system.includes('每格只定格一个动作阶段') && aiRequests.at(-1).user.includes('<original_story readonly="true">') && aiRequests.at(-1).user.includes('角色在咖啡馆等雨，之后离开咖啡馆。'));
-    check('本页 AI 重写也带当前分镜与留白', aiRequests.at(-1).user.includes('只重写第 1 页') && aiRequests.at(-1).system.includes('所选分镜风格为「经典四格」') && aiRequests.at(-1).system.includes('所选留白方案为「全封闭内框」'));
-    setLayout('comicPanelStyle','shounen');
-    check('切回其他风格恢复原每页格数选择', document.querySelector('[data-cs="comicPanels"][data-v="1–2"]').classList.contains('on') && data.options.comicPanels === '1–2');
+    check('本页 AI 重写也停用旧模板', aiRequests.at(-1).user.includes('只重写第 1 页') && aiRequests.at(-1).system.includes('按剧情自由分镜') && !aiRequests.at(-1).system.includes('所选留白方案'));
+
+    check('格数自动选项可独立恢复', !!document.querySelector('[data-cs="comicPanels"][data-v=""]'));
     check('分镜风格设置在手机宽度内显示', document.documentElement.scrollWidth <= window.innerWidth);
     const profileData={characters:{},chatCast:{},options:{}},profileContext={chatId:'profile-browser',chat:[{name:'合成叙述',mes:'新角色走进咖啡馆。'}]};
     const people={currentCast:()=>Object.values(profileData.characters).map(char=>({char,on:true})),blank:source=>({...source,appearance:[],outfits:[],outfitMode:'story'}),getChar:key=>profileData.characters[key],chatId:()=>profileContext.chatId,descOf:()=>''};

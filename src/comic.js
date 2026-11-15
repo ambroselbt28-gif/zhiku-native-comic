@@ -1,7 +1,7 @@
 // 漫画模式：认出聊天回复里的 <image>@page …</image> 漫画页（「酒馆看漫画」预设的分段协议），
 // 按页调用 NovelAI V5 Full 出整页漫画，存在这一楼的消息里；楼层下面按页显示，魔棒菜单「漫画」像漫画书一样翻。
 // 协议与思路来自「漫画台」预设（作者允许署名后使用，见 README「来源与署名」）；代码为智库自写。
-import { COMIC_PANEL_STYLES, COMIC_GUTTERS, resolveComicLayout, comicLayoutInstructions, comicLayoutExample } from './comic-layouts.js';
+import { comicLayoutInstructions, comicLayoutExample } from './comic-layouts.js';
 
 const COMIC_BLOCK = /<image\b[^>]*>([\s\S]*?)<\/image>/gi;
 const PLAN_BLOCK = /<comic_plan\b[^>]*>([\s\S]*?)<\/comic_plan>/gi;
@@ -182,7 +182,7 @@ export function comicGroundingWarnings(parsed) {
         const actions = chars.map(c => splitText(c.positive).visual).join('\n');
         if (/close[ -]?up|object focus/i.test(scene) && /(?:phone|smartphone) screen|object focus/i.test(scene) && chars.length > 1) warnings.push(`第 ${index + 1} 格写了物件特写，却放入多个人物；建议 AI 重写为物件/手部特写或人物中景。`);
         if (/close[ -]?up/i.test(scene) && /\b(?:kicking|one foot|walking|running|kneeling)\b/i.test(actions)) warnings.push(`第 ${index + 1} 格的近景同时要求腿脚动作，请明确镜头拍脸还是拍脚，或改为全身镜头。`);
-        if (/\b(?:then|followed by|after that)\b/i.test(actions)) warnings.push(`第 ${index + 1} 格混入先后动作，建议拆成不同画格，每格一个瞬间。`);
+        if (/\b(?:then|followed by|after that)\b/i.test(scene + '\n' + actions)) warnings.push(`第 ${index + 1} 格混入先后动作，建议拆成不同画格，每格一个瞬间。`);
         const refs = [...(scene + '\n' + actions).matchAll(/\bC\d+\b/g)].map(m => m[0]).filter(id => !ids.has(id));
         if (refs.length) warnings.push(`第 ${index + 1} 格引用了未定义人物 ${[...new Set(refs)].join('、')}，请补齐人物或用明确的外貌指代。`);
     }
@@ -237,7 +237,7 @@ export function comicRequest(parsed, { stylePos = '', styleNeg = '', extraNeg = 
     const chars = parsed.chars.map(c => {
         const caption = splitText(c.positive);
         const panel = Number.isInteger(c.panelIndex)
-            ? `This character appears in panel ${c.panelIndex + 1} (${c.panel}) only. ${c.panelDescription || ''}`.trim()
+            ? `This character appears in panel ${c.panelIndex + 1} (${c.panel}) only.`
             : '';
         const visual = [panel, c.id ? `Character ${c.id}.` : '', caption.visual].filter(Boolean).join('\n');
         const prompt = visual + (draw && caption.text ? '\nText: ' + caption.text : '');
@@ -284,10 +284,13 @@ export function captionSource(v, inner) {
 // 按本项目剧情与多人物协议编写，不复制社区漫画原始提示词。
 export const COMIC_SCENE_GUIDANCE = `【逐格镜头与人物校对】
 先在 comic_plan 中为每格列出：位置、一个镜头、当前瞬间、可见人物、谁看谁、谁的哪只手接触什么、对白归属。只把这一刻可见的画面写进 image。
-每格只定格一个动作阶段；不得把 then、after that 表示的先后动作塞进同一人物段。指向自己之后捂嘴，应选其中一瞬间或拆格，不能同时要求两种手势。
+每格只定格一个动作阶段；这个限制同时适用于 @panel 场景句和 @character 人物句。不得把 then、after that 表示的先后动作塞进同一人物段。指向自己之后捂嘴，应选其中一瞬间或拆格，不能同时要求两种手势。
 镜头决定可见范围：脸部/上半身近景不写踢箱子、走路脚步、鞋子动作；需要表现踢箱子就用全身或脚部特写。手机屏幕特写应主要画屏幕与持机的手，不再塞入两个人的完整正面肖像；若必须看两人的表情，改用肩后镜头或中景。
 每个 @panel 在位置、镜头、环境之后，补一句简短英文，说明这一格谁对谁做什么、谁看向谁或哪个物体。不能四格都只写同一背景，再靠对白区分剧情；依据剧情安排交代、动作、反应或物件特写，不凭空改变事件。
-同一人物全页保持同一个 C 编号，不同人物不得共用编号。每个人物段重复必要的固定外貌与当前镜头可见衣着，保留发色、眼色、脸型等识别特征，避免用帽子/角/发色混淆两人。不要添加正文和角色资料没有的年龄、装饰或新人物。
+人物首次出现时，在场景句和人物段明确姓名与编号的对应，例如 Character C1 (Mo Ci)。同一姓名始终对应同一编号，场景句不要只写姓名而人物段只写无对应关系的编号。
+同一人物全页保持同一个 C 编号，不同人物不得共用编号。共同环境、镜头和双人关系只写在 @panel；@character 只写该人物自己的外貌、动作、表情和视线对象，禁止复制整段双人剧情到每个人物栏。
+每个人物段重复必要的固定外貌与当前镜头可见衣着，保留发色、眼色、脸型等识别特征，避免用帽子/角/发色混淆两人。不要添加正文和角色资料没有的年龄、装饰或新人物。
+目光只选一个当前目标；闻衣领、看手机、再看同伴必须选一刻或拆格，撕旧表、拍下新表、签字也不能同时塞进一格。
 同格人物条目按画面从左到右排列，不按对白先后排列；有明确的手写坐标时让描述与坐标相符。
 互动句用自然语言指明对象，例如 the black-haired man looks at the lavender-haired woman；不要只写 watching calmly、screen facing C1 或 behind C3。左右位置明确指格内位置，人物面向/目光跟随对方或物体，不默认共同看镜头。
 持物、接触与重心必须可画：写清谁拿手机、哪只手、屏幕朝谁；每只手一个主要动作，近身接触写双方对应关系。前景遮挡时不强行显示后方人物所有身体部位。
@@ -300,6 +303,7 @@ export function rewriteRequest(message, page, requirement, layout = {}) {
     const plan = roundPlan(message);
     const refs = blocks.map(b => `<page_reference page="${b.page}">\n${b.plan ? `<comic_plan>\n${b.plan}\n</comic_plan>\n` : ''}<image>\n${b.inner}\n</image>\n</page_reference>`).join('\n\n');
     const system = '你是漫画分镜导演，负责改写单页漫画的分镜规划和图片提示词。沿用参考里的角色外貌、衣着、画风、色彩、对白语言和连续状态。'
+        + '旧页的等分网格与固定留白仅为旧方案，可以按剧情重新排布，不必沿用旧模板；保留本页事件与对白归属。'
         + '只输出一组 <comic_plan>…</comic_plan> 和一组 <image>…</image>，不要输出其他页、整轮规划或任何解释。'
         + '<image> 用分段文本协议：@page（分级、实际人数词、页面形态、画格数量、布局、留白、光影、文字标签）→ 每格 @panel P1、P2…（位置大小构图环境）→ 格内每个可见人物 @character C1…（boy/girl/other、完整外貌衣着、动作表情），可选 @negative、@non_character；'
         + '每格中每个可见人物单独写一条 @character，同一人物跨格出现时分别写；每页人物条目合计最多 22 条。每格位置和人物对白归属写清楚。'
@@ -332,9 +336,8 @@ export function isComicReply(message) {
         && !message.extra?.type && !Array.isArray(message.extra?.tool_invocations);
 }
 /** 「把这一楼画成漫画」的请求：读这一楼的正文，改编成几页漫画分镜 */
-export function adaptRequest(story, { pages = 0, panels = '', cast = '', before = '', color = 'color', extra = '', panelStyle = 'universal', gutter = 'follow' } = {}) {
-    const layout = { panelStyle, gutter, panels };
-    panels = resolveComicLayout(layout).panels;
+export function adaptRequest(story, { pages = 0, panels = '', cast = '', before = '', color = 'color', extra = '' } = {}) {
+    const layout = { panels };
     const system = '你是漫画分镜导演，把小说 / 角色扮演的正文改编成日式漫画页，给 NovelAI V5 出图用。'
         + '先按时间顺序识别正文中的独立剧情事件、场景变化和关键转折，每个剧情片段单独画一页。同一片段内的连续动作再拆成该页的多个画格。一条正文可以输出多页，每一页对应一张独立图片。'
         + '自动页数时，识别出几个剧情片段就输出几组页面；有多个片段就必须输出多组，不要把不同剧情都塞进一张图，也不要只画开头。每页的 <comic_plan> 写明页码、对应的剧情片段和画格安排。'
@@ -349,7 +352,7 @@ export function adaptRequest(story, { pages = 0, panels = '', cast = '', before 
         + comicLayoutExample(layout);
     const user = (cast ? `<characters>\n${cast}\n</characters>\n\n` : '')
         + (before ? `<previous readonly="true">\n${before}\n</previous>\n\n` : '')
-        + `<story>\n${story}\n</story>\n\n把 <story> 改编成${pages ? ` ${pages} 页` : '若干页（按剧情片段拆页，一个剧情片段一张，多个剧情片段必须输出多组 <comic_plan> + <image>，从开头一直画到结尾）'}${color === 'mono' ? '黑白网点' : '彩色'}漫画，${panels ? `每页 ${panels} 格` : '每页 2–5 格'}。只画 <story> 里发生的事${pages ? `，${pages} 页要把整段剧情从头画到尾，按剧情先后分配` : ''}。`
+        + `<story>\n${story}\n</story>\n\n把 <story> 改编成${pages ? ` ${pages} 页` : '若干页（按剧情片段拆页，一个剧情片段一张，多个剧情片段必须输出多组 <comic_plan> + <image>，从开头一直画到结尾）'}${color === 'mono' ? '黑白网点' : '彩色'}漫画，${panels ? `每页 ${panels} 格` : '每页格数按本页剧情决定，可用单幅主画面或少量分格，不固定四格'}。只画 <story> 里发生的事${pages ? `，${pages} 页要把整段剧情从头画到尾，按剧情先后分配` : ''}。`
         + (String(extra || '').trim() ? `\n额外要求：${String(extra).trim()}` : '');
     return { system, user };
 }
@@ -372,15 +375,6 @@ export function parseAdapt(text) {
     if (/<comic_plan\b/i.test(t.slice(last))) throw new Error('漫画分镜输出没有写完，最后一段剧情只有规划、缺少漫画页，请提高回复长度上限后重试');
     if (!out.length) throw new Error('AI 没有按格式写出漫画页（缺少 <image>@page …</image>）');
     return out.join('\n\n');
-}
-
-/** 新生成的经典四格分镜在保存与出图前检查格数。 */
-export function validateComicLayout(text, layout = {}) {
-    if (resolveComicLayout(layout).style.id !== 'yonkoma') return;
-    for (const block of comicBlocks(text)) {
-        const parsed = parseComicPage(block.inner);
-        if (parsed.panelTexts.length !== 4) throw new Error(`经典四格需要每页 4 格，第 ${block.page} 页返回了 ${parsed.panelTexts.length} 格，请重新生成分镜`);
-    }
 }
 
 /** 把消息里的第 page 页换成新写的 */
@@ -875,11 +869,10 @@ export function createComicController(deps) {
             if (act === 'ai') {
                 t.disabled = true; say('AI 正在重写这一页…');
                 try {
-                    const layout = { panelStyle:opts().comicPanelStyle, gutter:opts().comicGutter, panels:opts().comicPanels, story:storyText(msg.mes) };
+                    const layout = { panels:opts().comicPanels, story:storyText(msg.mes) };
                     const reference = replacePage(srcOf(msg), block.page, { image:draft, plan:'' });
                     const { system, user } = rewriteRequest(reference, block.page, box.querySelector('[data-w-req]').value, layout);
                     const out = parseRewrite(await askLLM(system, user, { maxTokens: 6000 }));
-                    validateComicLayout(`<image>${out.image}</image>`, layout);
                     if (!snap.current()) throw new Error('聊天或原文已变化，本次改写未写入');
                     box.closeModal();
                     await applyNewPage(id, block, out, snap);
@@ -926,7 +919,6 @@ export function createComicController(deps) {
             const neg = o.comicNeg ?? COMIC_DEFAULT_NEGATIVE;
             const posBad = comicPositiveConflicts(st.pos), negBad = comicNegativeConflicts([st.neg, neg].join(', '), { monochrome: o.comicColor === 'mono' });
             const tavern = deps.naiMode?.() === 'tavern';
-            const layout = resolveComicLayout({ panelStyle:o.comicPanelStyle, gutter:o.comicGutter, panels:o.comicPanels });
             root.innerHTML = `${box ? '<div class="pc-row-between"><h3 class="pc-h3" style="margin:0">漫画设置</h3><button class="pc-btn small" data-cx>好了</button></div>' : ''}
               ${tavern ? '<div class="pc-banwarn">⚠ 现在用的是酒馆里的 key：画不了漫画（分人物），到 NovelAI 设置里改成自己填 key 或第三方站点。</div>' : ''}
               <div class="pc-label">开关</div>
@@ -936,10 +928,7 @@ export function createComicController(deps) {
               <select class="pc-input" data-cstyle><option value="">跟正文画师串一样${d.active ? `（现在是「${esc(M.ticketName(d, d.active))}」）` : '（还没选）'}</option>
                 ${groups.map(g => `<option value="group:${esc(g.id)}" ${o.comicStyle === 'group:' + g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>
               <div class="pc-hint">漫画单独用一个画师串，不影响聊天插图。${posBad.length ? `<br><b>⚠ 这串里有人数词：${posBad.map(esc).join('、')}</b>，人数应该由每页自己写，建议去掉。` : ''}</div>
-              <label class="pc-field"><span>分镜风格</span><select class="pc-input" data-clayout="comicPanelStyle">${COMIC_PANEL_STYLES.map(style => `<option value="${style.id}" ${layout.style.id === style.id ? 'selected' : ''}>${esc(style.label)}</option>`).join('')}</select></label>
-              <div class="pc-hint">${esc(layout.style.description)}</div>
-              <label class="pc-field"><span>留白方案</span><select class="pc-input" data-clayout="comicGutter">${COMIC_GUTTERS.map(gutter => `<option value="${gutter.id}" ${layout.gutter.id === gutter.id ? 'selected' : ''}>${esc(gutter.label)}</option>`).join('')}</select></label>
-              <div class="pc-hint">${esc(layout.gutter.description)} 新生成分镜和本页 AI 重写使用当前选择。已有漫画可点「重新改编这一楼」采用新布局。</div>
+              <div class="pc-hint">分镜按剧情自由编排，已停用旧的分镜风格和留白模板。格数选「自动」时由 AI 决定，不固定四格或等分布局。已有页面需「重新改编这一楼」或「让 AI 重写本页」才能调整布局。</div>
               <div class="pc-label">颜色</div>
               ${seg('comicColor', [['color', '彩色'], ['mono', '黑白网点']], 'color')}
               <div class="pc-label">对白怎么出现</div>
@@ -958,7 +947,7 @@ export function createComicController(deps) {
               <div class="pc-label">「画成漫画」每楼画几页</div>
               ${seg('comicPages', [[0, '按剧情'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']], 0)}
               <div class="pc-label">每页几格</div>
-              ${layout.style.id === 'yonkoma' ? '<div class="pc-hint">经典四格固定每页 4 格，按起、承、转、合排列。</div>' : seg('comicPanels', [['', '自动'], ['1–2', '1–2'], ['3–4', '3–4'], ['5–6', '5–6']], '')}
+              ${seg('comicPanels', [['', '自动'], ['1–2', '1–2'], ['3–4', '3–4'], ['5–6', '5–6']], '')}
               <div class="pc-hint">「按剧情」时，每个剧情事件或场景转折单独一张漫画页，一条正文可以生成多张。每张页内再安排多个分格，按顺序覆盖整段正文。也可指定固定页数。</div>
               <div class="pc-hint">已有分镜需要重新拆页时，点楼层下的「重新改编这一楼」。「保留分镜，整楼重画」沿用已存页数，逐页生成新版本。</div>
               <label class="pc-field pc-mt-s"><span>给 AI 的改编要求（可不填）</span><textarea class="pc-textarea small" data-cstr="comicExtra" placeholder="比如：多用特写和留白；对白少一点；每页最多 3 格；不要画 user 的脸">${esc(o.comicExtra || '')}</textarea></label>
@@ -985,7 +974,6 @@ export function createComicController(deps) {
                 commit();
             }
             else if (t.dataset.cw) { opts()[t.dataset.cw] = t.checked; commit(); draw(); renderAll(); }
-            else if (t.dataset.clayout) { opts()[t.dataset.clayout] = t.value; commit(); draw(); }
             else if (t.matches('[data-cstyle]')) { opts().comicStyle = t.value; commit(); draw(); }
         });
         root.addEventListener('input', ev => { const t = ev.target; if (t.dataset.cstr) { opts()[t.dataset.cstr] = t.value; commit(); } });
@@ -1012,11 +1000,10 @@ export function createComicController(deps) {
             if (deps.prepare) { await deps.prepare(id); if (!snap.current()) return; }
             const prevMsg = (c.chat || []).slice(0, id).reverse().find(m => m && !m.is_system && m.extra?.zhikuComicSrc);
             const before = prevMsg ? comicBlocks(srcOf(prevMsg)).slice(-1).map(b => b.inner).join('') : '';
-            const layout = { panelStyle:opts().comicPanelStyle, gutter:opts().comicGutter, panels:opts().comicPanels || '' };
+            const layout = { panels:opts().comicPanels || '' };
             const { system, user } = adaptRequest(story, { pages: pages || Number(opts().comicPages) || 0, ...layout, cast: deps.castText?.() || '', before, color: opts().comicColor === 'mono' ? 'mono' : 'color', extra: opts().comicExtra || '' });
             const want = pages || Number(opts().comicPages) || 6;
             const out = parseAdapt(await askLLM(system, user, { maxTokens: Math.min(16000, 3000 + 1800 * want) }));
-            validateComicLayout(out, layout);
             if (!snap.current()) return;
             const restore = checkpoint(msg), removed = [];
             setSrc(msg, out);
