@@ -42,7 +42,7 @@ export function createAutoCharacterProfiles({ getContext, getData, characters, s
     const clone=value=>JSON.parse(JSON.stringify(value));
     const keyOf=c=>String(c.getCurrentChatId?.() ?? c.chatId ?? '')+'|'+String(c.characterId??'')+'|'+String(c.groupId??'');
     const normalize=value=>String(value).normalize('NFKC').replace(/\s+/g,'').toLowerCase();
-    const fingerprint=char=>JSON.stringify([char?.name,char?.aliases,char?.appearance,char?.outfits,char?.outfitId,char?.outfitMode,char?.canonOn,char?.canonTag,char?.autoProfile,char?.appearancePresets]);
+    const fingerprint=char=>JSON.stringify([char?.name,char?.aliases,char?.appearance,char?.outfits,char?.outfitId,char?.outfitMode,char?.canonOn,char?.canonTag,char?.autoProfile,char?.appearancePresets,char?.appearancePresetId]);
     function emit() { refresh();for(const listener of listeners)listener(); }
     function storyOf(msg) {
         let source=String(msg?.mes || '');const cfg=settings();
@@ -162,13 +162,15 @@ export function createAutoCharacterProfiles({ getContext, getData, characters, s
             if(!char.appearance?.length)throw new Error('当前没有外貌标签可保存');
             const presets=Array.isArray(char.appearancePresets)?char.appearancePresets:[];
             if(presets.some(p=>normalize(p.name)===normalize(name)))throw new Error('已有同名方案，请换一个名字保存');
-            return {...char,appearancePresets:[...clone(presets),{id:uid('look_saved_'),name,at:Date.now(),appearance:clone(char.appearance)}]};
+            const id=uid('look_saved_');
+            return {...char,appearancePresetId:id,appearancePresets:[...clone(presets),{id,name,at:Date.now(),appearance:clone(char.appearance)}]};
         });
     }
     function applyPreset(key,id) {
         return editAppearance(key,char=>{
             const preset=char.appearancePresets?.find(p=>p.id===id);if(!preset)throw new Error('请选择一套已保存的外貌');
-            return replaced(char,preset.appearance,'使用方案：'+preset.name);
+            if (currentAppearancePreset(char)?.id===id) return null;
+            return {...replaced(char,preset.appearance,'使用方案：'+preset.name),appearancePresetId:id};
         });
     }
     function replaceAppearance(key,text) {
@@ -183,6 +185,22 @@ export function createAutoCharacterProfiles({ getContext, getData, characters, s
         return editAppearance(key,char=>char.appearance?.length?replaced(char,[],'清空固定外貌'):null);
     }
     return {scan,revise,select,savePreset,applyPreset,replaceAppearance,clearAppearance,isBusy:key=>busy.has(key),subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn);},chatChanged(){epoch++;},stop(){stopped=true;epoch++;listeners.clear();}};
+}
+
+// 用实际英文标签核对当前方案，手动修改或 AI 重写后不显示过期高亮；中文释义变化不影响匹配。
+export function currentAppearancePreset(char) {
+    const signature=tags=>JSON.stringify((tags||[]).map(t=>String(typeof t==='string'?t:t.en||'').trim()));
+    const current=signature(char.appearance),matches=(char.appearancePresets||[]).filter(p=>signature(p.appearance)===current);
+    return matches.find(p=>p.id===char.appearancePresetId)||matches[0]||null;
+}
+
+export function renderAppearancePresets(char,{esc,busy=false}={}) {
+    const presets=Array.isArray(char.appearancePresets)?char.appearancePresets:[],active=currentAppearancePreset(char);
+    const disabled=busy?'disabled':'';
+    return `<div class="pc-chips wrap pc-mt-s" data-appearance-presets>
+      ${presets.map(p=>`<button type="button" class="pc-pill ${p.id===active?.id?'on':'dashed'}" style="max-width:100%;white-space:normal;overflow-wrap:anywhere" data-act="profile-preset" data-key="${esc(char.key)}" data-id="${esc(p.id)}" aria-pressed="${p.id===active?.id}" ${disabled}>${p.id===active?.id?'✓ ':''}${esc(p.name)}</button>`).join('')}
+      <button type="button" class="pc-pill dashed" data-act="profile-save-current" data-key="${esc(char.key)}" ${busy||!char.appearance?.length?'disabled':''}>＋ 保存当前外貌</button>
+      </div><div class="pc-hint">${active?'当前方案：'+esc(active.name):presets.length?'当前标签已修改，尚未匹配已存方案':'先编辑下方标签，再保存成方案'}。点方案名直接切换整套外貌。</div>`;
 }
 
 export function createProfileEditor({profiles,characters,modal,esc,preview}) {

@@ -62,8 +62,8 @@ const referenceAction = runtime.match(/case 'charrefpick': ([^\n]+)/)?.[1];
 if (!referenceAction) throw new Error('缺少正式参考绑定操作');
 const module = networkUiModule + referencePicker + '\nfunction pickCharacterReference(c,el,save) {'+referenceAction+'}\n' + naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
     + '\nfunction onBackfillClick(ev) { const ui = {view:"comic"}; switch(ev.target.dataset.act) {' + backfillAction + '} }'
-    + '\nasync function profileAction(act,key) { const ui={charKey:key}; switch(act) {'+profileActions+'} }'
-    + '\nexport { renderNetworkControls, networkSettingsChange, runNetworkProbe, renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction };';
+    + '\nasync function profileAction(act,key,el={dataset:{}}) { const ui={charKey:key};const promptText=(...args)=>globalThis.__profilePrompt(...args); switch(act) {'+profileActions+'} }'
+    + '\nexport { renderNetworkControls, networkSettingsChange, runNetworkProbe, renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, renderAppearancePresets, profileAction };';
 const html = fs.readFileSync(path.join(root, 'dev/comic-browser.html'), 'utf8');
 const reloadEntry = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
 const reloadTest = fs.readFileSync(path.join(root, 'dev/update-reload-browser.js'), 'utf8');
@@ -95,7 +95,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 129) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 137) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

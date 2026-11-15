@@ -35,7 +35,22 @@ export function applyAutoCharacterProfiles(source) {
     };
 `);
     patch('<b>固定外貌</b><span class="pc-chips" style="margin:0">',`<b>固定外貌</b><span class="pc-chips" style="margin:0"><button class="pc-pill dashed tiny" data-act="profile-open" \${busy ? 'disabled' : ''}>外貌方案 · 存取 / AI</button>`);
+    patch('      <div class="pc-dim small">头发、眼睛、脸、身材这类不会变的。',`      \${renderAppearancePresets(c,{esc,busy:!!busy||!!globalThis.__zhikuProfiles?.isBusy(c.key)})}
+      <div class="pc-dim small">头发、眼睛、脸、身材这类不会变的。`);
     patch("        case 'casttab':",`        case 'profile-open': globalThis.__zhikuProfiles?.open(ui.charKey); return true;
+        case 'profile-preset': {
+            try { await globalThis.__zhikuProfiles?.applyPreset(el.dataset.key,el.dataset.id); }
+            catch(error) { toastr.error(error.message || String(error),'智库 · 外貌方案'); }
+            return true;
+        }
+        case 'profile-save-current': {
+            const key=el.dataset.key;
+            const name=await promptText('保存当前外貌方案，叫什么？','');
+            if(!name)return true;
+            try { await globalThis.__zhikuProfiles?.savePreset(key,name); }
+            catch(error) { toastr.error(error.message || String(error),'智库 · 外貌方案'); }
+            return true;
+        }
         case 'profile-scan': await globalThis.__zhikuProfiles?.scan((SillyTavern.getContext().chat?.length||0)-1,{manual:true,force:true}); render(); return true;
         case 'casttab':`);
     patch('<h2 class="pc-h2" style="margin:0">这次聊天</h2>',`<h2 class="pc-h2" style="margin:0">这次聊天</h2>

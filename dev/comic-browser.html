@@ -19,7 +19,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <script type="module">
 import { addMesButtons, mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
 import {createGenerationPauseControls,createNaiGate,generationPauseHeader} from './runtime-comic.js';
-import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
+import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, renderAppearancePresets, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
     if (!value) throw new Error(name);
@@ -288,6 +288,28 @@ window.stcrSelfTest = async () => {
     check('命名方案切换整套生效并适配手机宽度',people.getChar(personKey).appearance.some(t=>t.en==='brown hair')&&!people.getChar(personKey).appearance.some(t=>t.en.includes('red eyes'))&&document.documentElement.scrollWidth<=window.innerWidth);
     document.querySelector('[data-profile-preview]').click();await nextTurn();
     check('试画入口使用选中的人物与最新标签', profilePreview.key===personKey && profilePreview.appearance.includes('brown hair'));
+    const quickLooks=document.createElement('section');document.body.appendChild(quickLooks);
+    const drawLooks=(busy=false)=>{quickLooks.innerHTML=renderAppearancePresets(people.getChar(personKey),{esc:escape,busy});};
+    const unwatchLooks=profileController.subscribe(()=>drawLooks(profileController.isBusy(personKey)));
+    quickLooks.onclick=event=>{const button=event.target.closest('[data-act]');if(button&&!button.disabled)void profileAction(button.dataset.act,personKey,button);};
+    drawLooks();
+    check('人物页直接展示已存方案并高亮当前',quickLooks.querySelectorAll('[data-act="profile-preset"]').length===2&&quickLooks.querySelector('.on').dataset.id===savedLook);
+    const blackLook=people.getChar(personKey).appearancePresets[1].id;
+    quickLooks.querySelector(`[data-id="${blackLook}"]`).click();await nextTurn();
+    check('点击方案按钮整套切换无需打开弹窗',people.getChar(personKey).appearance[1].en.includes('black hair')&&quickLooks.querySelector('.on').dataset.id===blackLook);
+    const versionCount=people.getChar(personKey).autoProfile.versions.length;
+    quickLooks.querySelector(`[data-id="${blackLook}"]`).click();await nextTurn();
+    check('重复点击当前方案不增加历史',people.getChar(personKey).autoProfile.versions.length===versionCount);
+    globalThis.__profilePrompt=async()=> '黑发副本';quickLooks.querySelector('[data-act="profile-save-current"]').click();await nextTurn();
+    check('人物页直接命名保存当前外貌',people.getChar(personKey).appearancePresets.length===3&&quickLooks.querySelector('.on').textContent.includes('黑发副本'));
+    people.getChar(personKey).appearance=[{en:'blue hair',zh:'蓝发'}];drawLooks();
+    check('手动改标签后取消旧方案高亮',!quickLooks.querySelector('.on')&&quickLooks.textContent.includes('当前标签已修改'));
+    quickLooks.querySelector(`[data-id="${savedLook}"]`).click();await nextTurn();
+    check('手动修改后仍可一键恢复保存方案',people.getChar(personKey).appearance.some(t=>t.en==='brown hair')&&quickLooks.querySelector('.on').dataset.id===savedLook);
+    drawLooks(true);check('外貌忙碌时禁用方案和保存按钮',[...quickLooks.querySelectorAll('button')].every(b=>b.disabled));
+    const latestPreset=people.getChar(personKey).appearancePresets.at(-1),priorName=latestPreset.name;latestPreset.name='<img src=x onerror=alert(1)>很长的方案名'.repeat(4);drawLooks();
+    check('方案名称转义且手机宽度内换行',!quickLooks.querySelector('img')&&quickLooks.getBoundingClientRect().right<=innerWidth&&[...quickLooks.querySelectorAll('button')].every(b=>b.getBoundingClientRect().right<=innerWidth));
+    latestPreset.name=priorName;unwatchLooks();quickLooks.remove();delete globalThis.__profilePrompt;
     // 在真实 iframe 和 AbortController 上验证联网控制，接口由合成回复代替。
     let networkFrame, cleanRequests = 0, pageRequests = 0, hangingSignal;
     const naiNetwork = createNaiNetwork({

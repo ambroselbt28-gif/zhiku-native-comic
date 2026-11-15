@@ -10,7 +10,7 @@ import { parseImageMarkers } from '../src/marker-generation.js';
 
 const runtime=fs.readFileSync(new URL('../runtime.js',import.meta.url),'utf8');
 const part=(a,b)=>{const start=runtime.indexOf(a),end=runtime.indexOf(b,start);assert(start>=0&&end>start,a);return runtime.slice(start,end);};
-const generated=vm.runInNewContext(part('// 自动人物建档与外貌方案版本','// 只调度当前聊天')+'\n({createAutoCharacterProfiles,profileAppearance,manualAppearance})',{...images,isComicReply,parseImageMarkers});
+const generated=vm.runInNewContext(part('// 自动人物建档与外貌方案版本','// 只调度当前聊天')+'\n({createAutoCharacterProfiles,profileAppearance,manualAppearance,currentAppearancePreset,renderAppearancePresets})',{...images,isComicReply,parseImageMarkers});
 const M=vm.runInNewContext(part('const __mod_model =','// ───── store.js')+'\n__mod_model',{structuredClone});
 const defer=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 function setup(code) {
@@ -31,6 +31,13 @@ for(const [label,code]of [['源码',original],['发布代码',generated]]) {
     const saved=setup(code),savedKey='char:main.png',snapshot=JSON.stringify(saved.C.getChar(savedKey).appearance);
     await saved.profiles.savePreset(savedKey,'黑发原版');
     const first=saved.C.getChar(savedKey).appearancePresets[0].id;
+    assert.equal(code.currentAppearancePreset(saved.C.getChar(savedKey)).id,first);
+    const savedCount=saved.saves;
+    await saved.profiles.applyPreset(savedKey,first);
+    assert.equal(saved.saves,savedCount,'重复点当前方案不写入或新增历史');
+    const translated=JSON.parse(JSON.stringify(saved.C.getChar(savedKey)));translated.appearance[0].zh='新翻译';
+    assert.equal(code.currentAppearancePreset(translated).id,first);
+    translated.appearance[0].en='new hair';assert.equal(code.currentAppearancePreset(translated),null,'手动修改不保留虚假高亮');
     await saved.profiles.replaceAppearance(savedKey,'1boy, 1.2::silver hair, blue eyes::\n freckles');
     assert.equal(saved.C.getChar(savedKey).appearance.length,3);
     assert.equal(saved.C.getChar(savedKey).appearance[1].en,'1.2::silver hair, blue eyes::');
