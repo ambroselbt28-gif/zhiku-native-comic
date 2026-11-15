@@ -59,6 +59,19 @@ const pauseControl=runtime.slice(runtime.indexOf('// 面板和悬浮入口控制
 const gateControl=runtime.slice(runtime.indexOf('function createNaiGate('),runtime.indexOf('const __naiGate='));
 const pauseHeader=runtime.match(/<div class="pc-generation-row">[^\n]+/)[0];
 networkUiModule += pauseControl+'\n'+gateControl+'\nexport {createGenerationPauseControls,createNaiGate};\nexport function generationPauseHeader(queue){const N={queueControl:queue};return `'+pauseHeader+'`;}\n';
+const memberPicker=runtime.slice(runtime.indexOf('// 画师组成员选择：'),runtime.indexOf('// 画师组成员选择结束。'));
+const memberAction=runtime.slice(runtime.indexOf("case 'addmember':"),runtime.indexOf("case 'editstring':",runtime.indexOf("case 'addmember':")));
+networkUiModule+=memberPicker+`
+export function mountArtistMemberTest(data){
+    let saves=0,box;
+    const getData=()=>data,esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+    const M={banInfo:()=>null,parseArtistList:()=>[],ensureArtist:()=>null};
+    const commit=()=>saves++,toastr={success(){}};
+    const modal=html=>{box=document.createElement('section');box.style.cssText='max-width:600px;width:100%;box-sizing:border-box;margin:auto';box.innerHTML=html;box.closeModal=()=>box.remove();document.body.append(box);return box;};
+    const el={dataset:{id:'group'}};switch('addmember'){${memberAction}}
+    return {box,saves:()=>saves};
+}
+`;
 const referenceAction = runtime.match(/case 'charrefpick': ([^\n]+)/)?.[1];
 if (!referenceAction) throw new Error('缺少正式参考绑定操作');
 const module = networkUiModule + referencePicker + '\nfunction pickCharacterReference(c,el,save) {'+referenceAction+'}\n' + naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
@@ -96,7 +109,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 143) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 153) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

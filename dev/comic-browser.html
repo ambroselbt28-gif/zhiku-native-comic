@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { addMesButtons, mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
+import { mountArtistMemberTest, addMesButtons, mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
 import {createGenerationPauseControls,createNaiGate,generationPauseHeader} from './runtime-comic.js';
 import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, renderAppearancePresets, profileAction } from './runtime-comic.js';
 const checks = [];
@@ -88,6 +88,28 @@ window.stcrSelfTest = async () => {
     pauseUI.stop();const beforeCancel=pauseGate.checkpoint();headToggle.click();
     check('停用时移除悬浮条和按钮事件',!document.querySelector('.zk-generation-pause')&&beforeCancel());
     pauseHead.remove();pauseGate.stop();
+    const artistData={groups:{group:{name:'测试组',members:[{artistId:'old',weight:.6}]}},artists:{old:{tag:'artist:alpha'},beta:{tag:'artist:beta_test',note:'古风'},gamma:{tag:'artist:gamma',name:'伽马'},evil:{tag:'artist:<img src=x onerror=alert(1)>'}}};
+    for(let i=0;i<120;i++)artistData.artists['extra'+i]={tag:'artist:extra_'+i};
+    const memberTest=mountArtistMemberTest(artistData),memberBox=memberTest.box;
+    const query=memberBox.querySelector('[data-artist-search]'),searchArtists=text=>{query.value=text;query.dispatchEvent(new Event('input',{bubbles:true}));};
+    check('加画师正式入口打开本地搜索多选弹窗',!!query&&memberBox.querySelectorAll('[data-artist-id]').length===100&&memberBox.querySelector('[data-artist-add]').disabled);
+    memberBox.querySelector('[data-artist-more]').click();
+    check('大画师库可显示更多且已有成员禁选',memberBox.querySelectorAll('[data-artist-id]').length===124&&memberBox.querySelector('[data-artist-id="old"]').disabled);
+    check('画师名按文本展示不执行HTML',!memberBox.querySelector('img')&&memberBox.textContent.includes('<img src=x'));
+    searchArtists('BETA test');memberBox.querySelector('[data-artist-id="beta"]').click();searchArtists('伽马');memberBox.querySelector('[data-artist-id="gamma"]').click();searchArtists('古风');
+    check('按tag别名备注搜索并保留跨搜索多选',memberBox.querySelector('[data-artist-id="beta"]').checked&&memberBox.querySelector('[data-artist-add]').textContent.includes('2'));
+    searchArtists('找不到这个画师');
+    check('无匹配显示说明且不丢失已选',memberBox.textContent.includes('没有匹配')&&!memberBox.querySelector('[data-artist-add]').disabled);
+    const memberBounds=memberBox.getBoundingClientRect();
+    check('手机选择弹窗无横向溢出',memberBounds.left>=0&&memberBounds.right<=innerWidth&&memberBox.scrollWidth<=memberBox.clientWidth);
+    memberBox.querySelector('[data-artist-add]').click();
+    check('确认加入已有画师并保持原权重',memberTest.saves()===1&&!memberBox.isConnected&&artistData.groups.group.members.length===3&&artistData.groups.group.members[0].weight===.6&&Object.keys(artistData.artists).length===124);
+    const cancelled=mountArtistMemberTest(artistData);cancelled.box.querySelector('[data-artist-id="evil"]').click();cancelled.box.querySelector('[data-artist-close]').click();
+    check('取消选择不写入画师组',cancelled.saves()===0&&artistData.groups.group.members.length===3);
+    const stale=mountArtistMemberTest(artistData);stale.box.querySelector('[data-artist-id="evil"]').click();delete artistData.groups.group;stale.box.querySelector('[data-artist-add]').click();
+    check('组被删除后不能误写入',stale.saves()===0&&stale.box.textContent.includes('画师组已变化'));stale.box.closeModal();
+    const empty=mountArtistMemberTest({groups:{group:{members:[]}},artists:{}});
+    check('空库仍提供原手动输入入口',empty.box.textContent.includes('画师库还是空的')&&!!empty.box.querySelector('[data-artist-manual]'));empty.box.closeModal();
     const savedBackfill=globalThis.__zhikuBackfill,savedToast=globalThis.toastr;
     const floorRow=document.createElement('div');floorRow.className='mes';floorRow.setAttribute('mesid','42');floorRow.innerHTML='<div class="mes_buttons"></div>';document.querySelector('#chat').append(floorRow);
     const floorCalls=[],floorToasts=[];let finishFloor;

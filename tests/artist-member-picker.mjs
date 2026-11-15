@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import * as original from '../src/artist-member-picker.js';
+const source=fs.readFileSync(new URL('../runtime.js',import.meta.url),'utf8');
+const slice=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
+const generated=vm.runInNewContext(slice('// 画师组成员选择：','// 画师组成员选择结束。')+'\n({filterArtistLibrary,addArtistGroupMembers})');
+const M=vm.runInNewContext(slice('const __mod_model =','// ───── store.js')+'\n__mod_model',{structuredClone});
+for(const [label,code] of [['源码',original],['发布代码',generated]]){
+    const data=M.emptyData(),ref=M.createFromString(data,{name:'已有组',text:'0.6::artist:alpha::, year 2025',forceGroup:true});
+    const beta=M.ensureArtist(data,'artist:Beta_Test'),gamma=M.ensureArtist(data,'artist:gamma');beta.note='适合古风，柔和';gamma.name='伽马';
+    const alpha=Object.values(data.artists).find(a=>a.tag==='artist:alpha');
+    const before=JSON.stringify(data);
+    assert.equal(code.filterArtistLibrary(data,ref.id,'ARTIST:beta test')[0].id,beta.id);
+    assert.equal(code.filterArtistLibrary(data,ref.id,'古风')[0].id,beta.id);
+    assert.equal(code.filterArtistLibrary(data,ref.id,'伽马')[0].id,gamma.id);
+    assert.equal(code.filterArtistLibrary(data,ref.id,'no match').length,0);
+    assert(code.filterArtistLibrary(data,ref.id,'alpha')[0].included);
+    assert.equal(JSON.stringify(data),before,'搜索不修改画师库');
+    const added=code.addArtistGroupMembers(data,ref.id,[alpha.id,beta.id,beta.id,'missing'],'0.3::artist:gamma::, 0.8::artist:delta::, artist:alpha',M);
+    assert.equal(added,3);assert.equal(data.groups[ref.id].members.length,4);
+    assert.equal(data.groups[ref.id].members[0].weight,0.6,'原画师权重保留');
+    assert.equal(data.groups[ref.id].members.find(m=>m.artistId===beta.id).weight,1);
+    assert.equal(data.groups[ref.id].members.find(m=>m.artistId===gamma.id).weight,0.3);
+    assert.equal(Object.keys(data.artists).length,4,'选择已有画师不另建重复条目');
+    const actual=M.ticketString(data,ref);assert.match(actual,/artist:beta_test/i);assert.match(actual,/0.3::artist:gamma::/);assert.match(actual,/year 2025/);
+    assert.equal(code.addArtistGroupMembers(data,ref.id,[beta.id],'artist:gamma',M),0);
+    const persisted=M.normalizeData(JSON.parse(JSON.stringify(data)));assert.equal(M.ticketString(persisted,ref),actual);
+    assert.throws(()=>code.addArtistGroupMembers(data,'deleted',[beta.id],'',M),/已不存在/);
+    console.log('PASS '+label+' 名称/tag/备注搜索、已有去重、权重与原串附加词保留、持久化及实际画师串');
+}
+assert.match(slice("case 'addmember':", "case 'editstring':"),/openArtistMemberPicker/);
+console.log('PASS 正式加画师入口已接到画师库选择器');
