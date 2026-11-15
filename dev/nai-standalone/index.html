@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAI 独立联网测试</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eff3f7;color:#182532;font:16px/1.65 system-ui,sans-serif}main{max-width:720px;margin:auto;padding:24px 16px}section{background:white;border:1px solid #dce3ea;border-radius:16px;padding:20px;margin:16px 0}h1{font-size:26px;margin:0 0 8px}h2{font-size:19px;margin:0 0 10px}p{margin:8px 0}.muted{color:#586879;font-size:14px}label{display:block;margin:14px 0 6px}input,select,button{font:inherit;border-radius:9px;padding:12px;border:1px solid #bdcad5;width:100%;min-height:48px}button{cursor:pointer;background:#205d9a;color:white;margin-top:10px}button.secondary{background:white;color:#205d9a}button:disabled{opacity:.5;cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}img{display:block;width:100%;border-radius:10px;margin-top:14px}#status{font-weight:600}#stop{background:#894a2e}[hidden]{display:none!important}
+</style><main>
+<h1>NAI 独立联网测试</h1><p>手机浏览器直接连接 NovelAI，不经过 TT、智库或电脑代理。</p>
+<p class="muted">电脑只提供这个页面。Key 仅存在当前页面内存中，只发送到 image.novelai.net；不保存到浏览器，不上传电脑。</p>
+<section><h2>1 · 填写官方 Key</h2><label for="key">Persistent API Token</label><input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴官方 Key">
+<label for="model">测试模型</label><select id="model"><option value="nai-diffusion-5-full">NAI 5 Full</option><option value="nai-diffusion-4-5-full">NAI 4.5 Full</option></select>
+<button id="connect">测试连接（不生图）</button><p class="muted">只查询订阅接口，最长等待 20 秒。成功只说明连接和鉴权正常，不代表生图也能成功。</p></section>
+<section><h2>2 · 生成一张测试图</h2><p>固定测试：832 × 1216，28 步，Euler Ancestral，CFG 5，固定种子。成年女性坐在窗边的普通插图，无参考图、无人设和画师串。</p>
+<label><input id="consent" type="checkbox" style="width:auto;min-height:auto"> 我知道此测试会正常消耗账号生图额度</label>
+<button id="generate">只生成一张测试图</button><p class="muted">只提交一次，不自动重试；最多等 180 秒。停止等待不能撤回服务端已经接受的请求。</p><img id="image" alt="测试生成的图片" hidden></section>
+<section><h2>3 · 查看与导出结果</h2><div id="status" role="status">尚未测试</div><button id="stop" hidden>停止等待</button><pre id="results"></pre><button id="download" class="secondary">下载测试记录（不含 Key）</button><button id="report" class="secondary">把测试记录发给这台电脑</button><p class="muted">只有点“发给电脑”才上传诊断记录，内容包括浏览器、时间、耗时、HTTP 状态和测试结果，不包括 Key 或图片。可在电脑浏览器打开同一页面作对照。</p></section>
+<p class="muted">HTTP 401/403 是鉴权或服务端拒绝，429 是限流。Failed to fetch/超时不能单独区分网络、跨域或浏览器问题。收到 HTTP 200 但图片解析失败，也不能归类为网络不通。</p>
+</main><script type="module" src="/app.mjs"></script></html>
