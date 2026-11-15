@@ -46,8 +46,8 @@ process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 const dir='.';
 let s=applyMarkers(JSON.parse(fs.readFileSync('zhiku.script.json','utf8')).content);
 function patch(a,b){assert.equal(s.split(a).length,2,a.slice(0,80));s=s.replace(a,()=>b);}
-patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.60-native.25';");
-patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.60-native.25');
+patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.60-native.26';");
+patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.60-native.26');
 patch('    const run = () => {\n        saving = saving.then(writeNow)', '    const run = () => {\n        saveTimer = null;\n        saving = saving.then(writeNow)');
 patch('return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl };', 'return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl, flush: () => saveTimer !== null ? commit({ immediate: true, silent: true }) : saving };');
 // Preserve nested API error messages and object details in both response paths.
@@ -3399,8 +3399,8 @@ patch(`        const blocks = comicBlocks(srcOf(msg));
             return;
         }
         render(id);`);
-patch(`    async function process(id, { manual = false } = {}) {`,`    const autoAdapted = new Set();
-    async function process(id, { manual = false } = {}) {`);
+patch(`    async function process(id, { manual = false, generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true) } = {}) {`,`    const autoAdapted = new Set();
+    async function process(id, { manual = false, generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true) } = {}) {`);
 patch(`              \${sw('comicAuto', '回复写完自动出图', '关掉的话，在楼层里点「生成这一页」再画', true)}`,`              \${sw('comicAuto', '回复写完自动画成漫画', 'AI 自己把回复改编成分镜再画（每楼多一次 AI 调用，只画最新一楼）；关掉的话，在楼层里点「画成漫画」再画', true)}`);
 patch(`function isReady() {
     const s = settings();
@@ -3527,9 +3527,9 @@ patch(`            if (!manual && id === (getContext().chat?.length || 0) - 1 &&
 patch(`                try { await adapt(id); } catch (e) { console.warn('[智库] 漫画自动改编', e); }`,`                try { await adapt(id, { draw: opts().comicAuto !== false }); } catch (e) { console.warn('[智库] 漫画自动改编', e); }`);
 patch(`    async function adapt(id, { pages = 0, redo = false } = {}) {`,`    async function adapt(id, { pages = 0, redo = false, draw = true } = {}) {`);
 patch(`        } finally { if (adapting.get(id) === task) adapting.delete(id); render(id); }
-        await process(id, { manual: true });
+        await process(id, { manual: true, generationCurrent });
     }`,`        } finally { if (adapting.get(id) === task) adapting.delete(id); render(id); }
-        if (draw) await process(id, { manual: true });
+        if (draw) await process(id, { manual: true, generationCurrent });
     }`);
 patch(`              \${sw('comicAuto', '回复写完自动画成漫画', 'AI 自己把回复改编成分镜再画（每楼多一次 AI 调用，只画最新一楼）；关掉的话，在楼层里点「画成漫画」再画', true)}`,`              \${sw('comicAutoAdapt', '回复写完自动写分镜', 'AI 自己把回复改编成分镜（每楼多一次 AI 调用，只管最新一楼、每楼只写一次）；关掉的话，在楼层里点「画成漫画」再写', true)}
               \${sw('comicAuto', '分镜写好自动出图', '关掉的话，分镜写好先放着，在楼层里点「生成这一页」再画', true)}
@@ -4514,8 +4514,8 @@ patch(`        else list.push({ t: Date.now(), k: kind, m: text, d: String(det |
 patch(`function clearLogs() { logBuf = []; try { localStorage.removeItem(LOG_KEY); } catch { /* 无所谓 */ } }`,`function clearLogs() { logBuf = []; clearTimeout(logTimer); void idbSet('log', '[]'); }`);
 patch(`        正面: opts.positive, 负面: opts.negative,`,`        来源: opts.src || globalThis.__zkSrc || '（没标）',
         正面: opts.positive, 负面: opts.negative,`);
-patch(`                    const image=await generate(prompt,{story});if(!current())return 0;`,`                    globalThis.__zkSrc=\`正文第 \${id} 楼 · 第 \${all.indexOf(token)+1} 个标记\${manual?'（手动点）':'（自动）'}\`;
-                    let image;try{image=await generate(prompt,{story});}finally{globalThis.__zkSrc='';}
+patch(`                    const image=await generate(prompt,{story,generationCurrent});if(!current())return 0;`,`                    globalThis.__zkSrc=\`正文第 \${id} 楼 · 第 \${all.indexOf(token)+1} 个标记\${manual?'（手动点）':'（自动）'}\`;
+                    let image;try{image=await generate(prompt,{story,generationCurrent});}finally{globalThis.__zkSrc='';}
                     if(!current()){globalThis.__zkLog?.('正文图没放进去',\`第 \${id} 楼：图生成完了，但这一楼已经变了（换了回复、重新生成、被编辑或被别的脚本改了标记前面的字），这张只留在历史生图里\`);return 0;}`);
 patch(`                    const {url}=await upload(image,'marker_'+Date.now());if(!current())return 0;`,`                    const {url}=await upload(image,'marker_'+Date.now());if(!current()){globalThis.__zkLog?.('正文图没放进去',\`第 \${id} 楼：图存好时这一楼已经变了，这张只留在历史生图里\`);return 0;}`);
 patch(`<div class="pc-actions wrap"><button class="pc-btn" data-m="clear">清空</button><button class="pc-btn" data-m="copy">复制全部</button><button class="pc-btn dark" data-m="ok">好</button></div>\`);`,`<div class="pc-actions wrap"><button class="pc-btn" data-m="clear">清空</button><button class="pc-btn" data-m="dl">下载成文件</button><button class="pc-btn" data-m="copy">复制全部</button><button class="pc-btn dark" data-m="ok">好</button></div>\`);`);
@@ -5380,7 +5380,7 @@ patch('连不上${where}，请求没发出去（${e.message}）。检查网络�
 s=applyNaiNetwork(s);
 s=applyUpdateReload(s);
 const prefix=`// 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.25';
+export const runtimeVersion = '0.8.60-native.26';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -5393,9 +5393,9 @@ function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
 `;
 fs.writeFileSync(dir+'/runtime.js',(prefix+s+'\n}\n').replace(/\r\n/g, '\n'));
 fs.writeFileSync(dir+'/index.js',buildReloadEntry());
-fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.60-native.25',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete',update:'onUpdate'}},null,2)+'\n');
-fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.60-native.25',private:true,type:'module'},null,2)+'\n');
+fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.60-native.26',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete',update:'onUpdate'}},null,2)+'\n');
+fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.60-native.26',private:true,type:'module'},null,2)+'\n');
 fs.writeFileSync(dir+'/capability-contract.json',JSON.stringify({schemaVersion:1,minimum:{sillytavern:'1.14.0',tavernHelper:null},requirements:[{id:'host-context',owner:'sillytavern',symbol:'SillyTavern.getContext',required:true,fallback:null}]},null,2));
 assert(!s.includes('getButtonEvent('));
 for(const key of ['piaoce_data.json','piaoce_nai','piaoce_uid','data-share-form'])assert(s.includes(key));
-console.log('智库 NAI5 原生漫画二改 0.8.60-native.25 构建完成。');
+console.log('智库 NAI5 原生漫画二改 0.8.60-native.26 构建完成。');

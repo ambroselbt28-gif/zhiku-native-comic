@@ -31,6 +31,7 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
         finally { busy.delete(msg); }
     }
     async function plan(id, selection, { backfill = false } = {}) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         const c = getContext(), cfg = settings(), msg = c.chat?.[id];
         const manual=!!selection || backfill;
         const warn = message => { failures.set(msg, message); notifyWarning(message); };
@@ -44,19 +45,20 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
             const chat=chatKey(c),swipe=msg.swipe_id;
             await prepare(id);
             const now=getContext();
-            if(stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return;
+            if(!generationCurrent()||stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return;
         }
         const req = request('after', story,selection?.text), signature = String(msg.swipe_id) + source + req.system + req.user;
         if (!manual && seen.get(msg) === signature) return;
         if(!manual)seen.set(msg,signature);
         const forget=()=>{if(seen.get(msg)===signature)seen.delete(msg);};
         const chatId = chatKey(c), swipe = msg.swipe_id;
-        const current = () => { const now=getContext();return !stopped && chatKey(now) === chatId && now.chat?.[id] === msg && msg.swipe_id === swipe && String(msg.mes || '') === source; };
+        const current = () => { const now=getContext();return generationCurrent() && !stopped && chatKey(now) === chatId && now.chat?.[id] === msg && msg.swipe_id === swipe && String(msg.mes || '') === source; };
         const max = JSON.parse(req.user).imageLimit;
         onRequest(req);
         let response;
         try { response = pickJson(await askLLM(req.system, req.user, {maxTokens:Math.min(16384,1200+1600*max)})); }
         catch(e) { if (current()) warn('自动插图没写出来：'+e.message);forget();return; }
+        if(!generationCurrent()){forget();return;}
         if (!current()) { if(manual)warn('原文或聊天已变化，选段结果没有写入');return; }
         const items = Array.isArray(response?.images) ? response.images : [];
         const selected = [];
@@ -102,7 +104,7 @@ export function createIllustrationPlanner({ getContext, getData, settings, roste
         // SillyTavern 1.14.0 public/scripts/st-context.js exports eventTypes and eventSource.
         now.updateMessageBlock?.(id,msg);try{const ev=now.eventTypes||now.event_types;if(ev?.MESSAGE_UPDATED)await now.eventSource?.emit?.(ev.MESSAGE_UPDATED,id);}catch{}
         const latest=getContext();
-        if(stopped||chatKey(latest)!==chatId||latest.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==next)return;
+        if(!generationCurrent()||stopped||chatKey(latest)!==chatId||latest.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==next)return;
         await afterSave(id,{manual,tokenIndices});
         return selected.length;
     }

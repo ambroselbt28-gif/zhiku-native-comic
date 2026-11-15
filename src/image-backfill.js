@@ -32,8 +32,10 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
         return { candidates: rows.filter(row => row.eligible && !row.images && !row.busy).length, images: rows.filter(row => row.eligible && row.images).length, busy: rows.filter(row => row.eligible && row.busy).length };
     }
     async function run(jobs, chat, mode, fillMissing) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         try {
             for (const job of jobs) {
+                if (!generationCurrent()){cancelled=true;break;}
                 if (cancelled || stopped) break;
                 if (chatKey(getContext()) !== chat) { state.reason = '聊天已切换，补图已停止'; break; }
                 const row = state.rows.find(row => row.id === job.id);
@@ -52,12 +54,13 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
                         if (markers.tokens) await marker.process(job.id, { manual: true, tokenIndices: markers.missing });
                         else await planner.backfill(job.id);
                     }
+                    if(!generationCurrent())cancelled=true;
                     const now = getContext();
                     if (chatKey(now) !== chat || now.chat?.[job.id] !== msg || msg.swipe_id !== job.swipe) {
                         Object.assign(row, { status: 'skipped', reason: '聊天或候选回复已变化' });
                     } else {
                         const generated = mode === 'comic' ? comic.status(job.id) : marker.status(job.id);
-                        Object.assign(row, fillMissing && mode === 'ill' && generated.missing?.length
+                        Object.assign(row, !generationCurrent() ? {status:generated.images>before.images?'done':'skipped',reason:'后续生图已取消，已完成图片保留'} : fillMissing && mode === 'ill' && generated.missing?.length
                             ? {status:'failed',reason:`仍有 ${generated.missing.length} 张普通插图未生成：${generated.error || planner.status(job.id).error || '请再次点击补图重试'}`}
                             : generated.images > 0
                             ? { status: 'done', reason: `已生成 ${generated.images} 张` }

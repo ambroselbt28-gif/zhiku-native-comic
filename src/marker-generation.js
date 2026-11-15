@@ -238,10 +238,11 @@ export function createMarkerController({context,getData,generate,upload,notify,d
     }
     const chatKey=c=>String(c.getCurrentChatId?.() ?? c.chatId ?? '')+'|'+String(c.characterId ?? '')+'|'+String(c.groupId ?? '');
     async function process(id,{manual=false,tokenIndex=null,tokenIndices=null,promptOverride=null}={}) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         const c=context(),msg=c.chat?.[id],cfg=settings();
         if(stopped||!msg||(msg.is_system&&!(manual&&isComicReply(msg)))||(!manual&&(!cfg.auto||msg.is_user)))return 0;
         const source=String(msg.mes||''),swipe=msg.swipe_id,chat=chatKey(c),all=parseImageMarkers(source,cfg.start,cfg.end);
-        if(prepare&&all.length){await prepare(id);const now=context();if(stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return 0;}
+        if(prepare&&all.length){await prepare(id);const now=context();if(!generationCurrent()||stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return 0;}
         if(manual&&tokenIndex===null&&!Array.isArray(tokenIndices)&&all.length>1){notify('请点击具体提示词旁的生成按钮，一次只生成所选图片','info');decorate(id);return 0;}
         const selected=Array.isArray(tokenIndices)?all.filter((_,i)=>tokenIndices.includes(i)):tokenIndex===null?all:all.filter((_,i)=>i===tokenIndex);
         if(!selected.length){if(manual)notify('没有完整生图标记','info');return 0;}
@@ -257,14 +258,14 @@ export function createMarkerController({context,getData,generate,upload,notify,d
             // 别的脚本改了这一楼其他地方（状态栏、正则）不算变：只要这个标记还在原位置，结果照样存
             const current=()=>!stopped&&chatKey(context())===chat&&context().chat?.[id]===msg&&msg.swipe_id===swipe&&String(msg.mes||'').slice(token.index,token.index+token.raw.length)===token.raw;
             const job=queue.then(async()=>{
-                if(!current())return 0;
+                if(!current()||!generationCurrent())return 0;
                 entry.state='生成中…';decorate(id);
                 try {
                     const prompt=promptOverride??findRecord(msg,token)?.prompt??token.prompt;
                     // Story is only evidence for a structured shot's source quote, never a cast lookup.
                     let story=source;
                     for(const marker of [...all].reverse())story=story.slice(0,marker.index)+story.slice(marker.index+marker.raw.length);
-                    const image=await generate(prompt,{story});if(!current())return 0;
+                    const image=await generate(prompt,{story,generationCurrent});if(!current())return 0;
                     entry.state='保存中…';decorate(id);
                     const {url}=await upload(image,'marker_'+Date.now());if(!current())return 0;
                     if(!url)throw new Error('图片上传未返回地址');
@@ -275,7 +276,7 @@ export function createMarkerController({context,getData,generate,upload,notify,d
                     records[key]={url:String(url),prompt,versions};
                     try{await c.saveChat();}catch(e){if(old)records[key]=old;else delete records[key];if(!hadRecords&&!Object.keys(records).length)delete msg.extra.zhikuImages;if(!hadExtra&&!Object.keys(msg.extra).length)delete msg.extra;throw e;}
                     failed.get(msg)?.delete(key);return 1;
-                }catch(e){let errors=failed.get(msg);if(!errors){errors=new Map();failed.set(msg,errors);}errors.set(key,e.message||String(e));notify(e.message||String(e),'error');return 0;}
+                }catch(e){if(e.generationCancelled||!generationCurrent())return 0;let errors=failed.get(msg);if(!errors){errors=new Map();failed.set(msg,errors);}errors.set(key,e.message||String(e));notify(e.message||String(e),'error');return 0;}
             }).finally(()=>{inflight.delete(flight);map.delete(key);if(!map.size)pending.delete(msg);if(!stopped&&chatKey(context())===chat)decorate(id);});
             entry.job=job;queue=job.catch(()=>{});return job;
         });

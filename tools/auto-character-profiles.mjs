@@ -22,10 +22,11 @@ export function applyAutoCharacterProfiles(source) {
     const start=s.indexOf('    const onCharMsg = id => {'),end=s.indexOf('    for (const [ev, fn] of [[event_types.USER_MESSAGE_RENDERED',start);
     assert(start>=0&&end>start,'角色回复入口');
     patch(s.slice(start,end),`    const onCharMsg = id => {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         setTimeout(async()=>{
             const c=SillyTavern.getContext(),msg=c.chat?.[Number(id)],chat=C.chatId(),body=msg?.mes,swipe=msg?.swipe_id;
             await profiles.scan(Number(id));
-            if(stopped||C.chatId()!==chat||SillyTavern.getContext().chat?.[Number(id)]!==msg||msg?.mes!==body||msg?.swipe_id!==swipe)return;
+            if(!generationCurrent()||stopped||C.chatId()!==chat||SillyTavern.getContext().chat?.[Number(id)]!==msg||msg?.mes!==body||msg?.swipe_id!==swipe)return;
             comic.render(Number(id));void comic.process(Number(id)).catch(error=>console.warn('[智库] 漫画',error));
             const o=getData().options,n=o.illustMode==='inline'?Math.max(1,Number(o.illustMax)||1):0;
             void __mod_marker.process(Number(id),n?{tokenIndices:[...Array(n).keys()]}:{}).catch(error=>console.warn('[智库] 标记生图',error));

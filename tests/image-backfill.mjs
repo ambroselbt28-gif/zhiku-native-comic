@@ -12,10 +12,13 @@ import * as illustrationPlans from '../src/illustration-plans.js';
 import * as markerGeneration from '../src/marker-generation.js';
 import * as selectedImages from '../src/selected-image.js';
 
+let generationVersion=0;
+const generationControl={checkpoint:()=>{const captured=generationVersion;return()=>captured===generationVersion;}};
+globalThis.__zhikuGenerationControl=generationControl;
 const runtime = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8');
-const generated = vm.runInNewContext(runtime.slice(runtime.indexOf('// 只调度当前聊天'), runtime.indexOf('const COMIC_BLOCK')) + '\ncreateImageBackfill', { isComicReply, imageStoryText });
-const generatedMarker = vm.runInNewContext(runtime.slice(runtime.indexOf('// Marker-triggered generation'), runtime.indexOf('const pcLocal =')) + '\ncreateMarkerController', { isComicReply });
-const generatedPlanner = vm.runInNewContext(runtime.slice(runtime.indexOf('function createIllustrationPlanner'), runtime.indexOf('function renderIllustrationEditor')) + '\ncreateIllustrationPlanner', { ...imageCharacters, ...illustrationPlans, ...markerGeneration, ...selectedImages, isComicReply });
+const generated = vm.runInNewContext(runtime.slice(runtime.indexOf('// 只调度当前聊天'), runtime.indexOf('const COMIC_BLOCK')) + '\ncreateImageBackfill', { isComicReply, imageStoryText, __zhikuGenerationControl:generationControl });
+const generatedMarker = vm.runInNewContext(runtime.slice(runtime.indexOf('// Marker-triggered generation'), runtime.indexOf('const pcLocal =')) + '\ncreateMarkerController', { isComicReply, __zhikuGenerationControl:generationControl });
+const generatedPlanner = vm.runInNewContext(runtime.slice(runtime.indexOf('function createIllustrationPlanner'), runtime.indexOf('function renderIllustrationEditor')) + '\ncreateIllustrationPlanner', { ...imageCharacters, ...illustrationPlans, ...markerGeneration, ...selectedImages, isComicReply, __zhikuGenerationControl:generationControl });
 const page = '<image>@page\ncomic page, 1 panel\n@panel P1\ncafe interior\n@character C1\nboy, black hair, holding a book\nText: 早上好。</image>';
 const emptyComic = { status: () => ({ images: 0, busy: false }), adapt: async () => {} };
 function setup(factory, messages) {
@@ -46,6 +49,17 @@ function setup(factory, messages) {
 }
 const reply = extra => ({ name: '合成角色', mes: '角色走进咖啡馆。手里拿着一本书。', swipe_id: 0, ...extra });
 for (const [label, factory] of [['源码', createImageBackfill], ['发布代码', generated]]) {
+    // 取消发生在文字规划或图片请求期间：不继续后续楼层，已返回图片保留。
+    for(const existing of [false,true]){
+        const h=setup(factory,[reply(existing?{mes:'image###first###'}:{}),reply()]);
+        let release;h.hold(new Promise(r=>release=r));const work=h.controller.start({from:0,to:1});
+        await new Promise(r=>setTimeout(r,0));generationVersion++;release();const result=await work;
+        assert.equal(result.rows[1].status,'skipped');
+        assert.equal(h.calls.filter(c=>c[0]==='image').length,existing?1:0);
+        assert.equal(result.rows[0].status,existing?'done':'skipped');
+        h.hold(null);await h.controller.fillFloor(1);assert.equal(h.marker.status(1).images,1);
+        h.controller.stop();h.marker.stop();h.planner.stop();
+    }
     // 本楼按钮：关闭自动插图时仍可选镜补图，已有成功图不重画，只补剩余标记。
     const single=setup(factory,[reply(),reply()]);
     let singleReport=await single.controller.fillFloor(0);
@@ -199,3 +213,5 @@ for (const [label, factory] of [['源码', createImageBackfill], ['发布代码'
 }
 for (const text of ["globalThis.__zhikuBackfill = backfillGateway", 'fillFloor:backfill.fillFloor', 'backfill.chatChanged(); selectedImages.reset()', "fn: 'ill'", "fn: 'comic'", 'data-act="image-backfill"']) assert(runtime.includes(text), text);
 console.log('PASS 发布构建接入副 API、普通插图入口、漫画入口和聊天切换清理');
+
+delete globalThis.__zhikuGenerationControl;

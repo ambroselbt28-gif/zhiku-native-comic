@@ -2,11 +2,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {createNaiGate} from '../src/nai-gate.js';
 import * as original from '../src/comic.js';
 
 const runtime = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8');
+const control=createNaiGate({gap:0});globalThis.__zhikuGenerationControl=control;
 const generated = vm.runInNewContext(runtime.slice(runtime.indexOf('const COMIC_BLOCK'), runtime.indexOf('// The entire editable instruction'))
-    + '\n({createComicController,comicBlocks,adaptRequest,parseAdapt})', { console, setTimeout, clearTimeout });
+    + '\n({createComicController,comicBlocks,adaptRequest,parseAdapt})', { console, setTimeout, clearTimeout, __zhikuGenerationControl:control });
 const page = scene => `<comic_plan>剧情片段 ${scene}，两格</comic_plan>\n<image>@page
 comic page, 2 panels, warm lighting
 @panel P1
@@ -42,6 +44,15 @@ function setup(code, inline = false) {
     };
 }
 for (const [label, code] of [['源码', original], ['发布代码', generated]]) {
+    {
+        const h=setup(code),wait=defer();h.hold(wait.promise);
+        const task=h.controller.redrawAll(0);assert.equal(h.requests.length,1);
+        control.cancelPending();wait.resolve();const result=await task;
+        assert.equal(h.requests.length,1,'取消后不得继续其他漫画页');
+        assert.equal(result.success,1,'保留当前页成功结果');
+        assert.equal(h.msg.extra.zhikuComic[h.blocks[0].key].versions.length,2);
+        h.hold(null);await h.controller.redrawAll(0);assert.equal(h.requests.length,4,'新的手动重画正常工作');h.controller.stop();
+    }
     const planning = code.adaptRequest('先等雨，再出门，最后进图书馆。');
     assert.match(planning.system, /每个剧情片段单独画一页/);
     assert.match(planning.user, /多个剧情片段必须输出多组/);
@@ -122,3 +133,5 @@ for (const [label, code] of [['源码', original], ['发布代码', generated]])
     }
     console.log('PASS ' + label + ' 整楼保留分镜重画、多页出图、新种子、旧版本、去重、失败回滚和聊天候选在途保护');
 }
+
+delete globalThis.__zhikuGenerationControl;control.stop();

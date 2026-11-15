@@ -622,6 +622,7 @@ export function createComicController(deps) {
 
     /** 一次操作重画本楼所有页，分镜原文不变，每页保留原有版本。 */
     function redrawAll(id) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         if (isRedrawing(id)) return redrawing.get(id).job;
         const snap = pageSnapshot(id);
         if (!snap || !isComicReply(snap.msg)) return Promise.resolve(null);
@@ -635,7 +636,7 @@ export function createComicController(deps) {
         task.job = (async () => {
             try {
                 for (const block of blocks) {
-                    if (!snap.current()) break;
+                    if (!snap.current()||!generationCurrent()) break;
                     render(id);
                     const seed = redrawSeed(curVer(rec(snap.msg, block.key))?.seed);
                     const ok = await generateOne(id, block, { seed, batch: task });
@@ -643,7 +644,8 @@ export function createComicController(deps) {
                     task.completed++;
                     if (ok) task.success++; else task.failed++;
                 }
-                if (snap.current()) notify(`整楼重画完成，成功 ${task.success} / ${task.total} 页${task.failed ? `，失败 ${task.failed} 页，可点对应页面重试` : ''}`);
+                if (!generationCurrent()) notify('后续漫画已取消，已完成图片保留');
+                else if (snap.current()) notify(`整楼重画完成，成功 ${task.success} / ${task.total} 页${task.failed ? `，失败 ${task.failed} 页，可点对应页面重试` : ''}`);
                 return { total: task.total, success: task.success, failed: task.failed, completed: task.completed };
             } finally {
                 if (redrawing.get(id) === task) redrawing.delete(id);
@@ -654,7 +656,7 @@ export function createComicController(deps) {
     }
 
     /** 这楼里还没出图的页，一页一页排队出 */
-    async function process(id, { manual = false } = {}) {
+    async function process(id, { manual = false, generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true) } = {}) {
         if (isRedrawing(id)) return;
         if (stopped || (!manual && (!enabled() || opts().comicAuto === false))) return;
         const msg = getContext().chat?.[id];
@@ -664,7 +666,7 @@ export function createComicController(deps) {
         render(id);
         const snap = pageSnapshot(id, blocks[0]);
         for (const b of blocks) {
-            if (!snap?.current()) break;
+            if (!snap?.current()||!generationCurrent()) break;
             if (!rec(msg, b.key)?.versions?.some(version => version.url) && !running.has(`${id}:${b.key}`)) await generateOne(id, b);
         }
     }
@@ -867,12 +869,14 @@ export function createComicController(deps) {
                 return;
             }
             if (act === 'ai') {
+                const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
                 t.disabled = true; say('AI 正在重写这一页…');
                 try {
                     const layout = { panels:opts().comicPanels, story:storyText(msg.mes) };
                     const reference = replacePage(srcOf(msg), block.page, { image:draft, plan:'' });
                     const { system, user } = rewriteRequest(reference, block.page, box.querySelector('[data-w-req]').value, layout);
                     const out = parseRewrite(await askLLM(system, user, { maxTokens: 6000 }));
+                    if(!generationCurrent())throw new Error('后续漫画已取消');
                     if (!snap.current()) throw new Error('聊天或原文已变化，本次改写未写入');
                     box.closeModal();
                     await applyNewPage(id, block, out, snap);
@@ -882,6 +886,7 @@ export function createComicController(deps) {
     }
     /** 把新写的一页换进这楼的正文，旧版本跟着搬过去，然后出图 */
     async function applyNewPage(id, block, page, snap = pageSnapshot(id, block)) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         if (isRedrawing(id)) return;
         if (!snap?.current()) return;
         const { c, msg, source } = snap, restore = checkpoint(msg), old = rec(msg, block.key);
@@ -893,7 +898,7 @@ export function createComicController(deps) {
         if (!snap.current(next)) return;
         if (where === 'mes') c.updateMessageBlock?.(id, msg);
         render(id);
-        if (nb) await generateOne(id, nb);
+        if (nb&&generationCurrent()) await generateOne(id, nb);
     }
 
     // ── 漫画设置：专门一个面板（漫画书右上角「设置」、智库设置里的「漫画」都能打开） ──
@@ -983,6 +988,7 @@ export function createComicController(deps) {
 
     // ── 把一楼画成漫画：AI 读正文写分镜，存进这楼，再一页页出图 ──
     async function adapt(id, { pages = 0, redo = false } = {}) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         if (isRedrawing(id)) { notify('整楼重画进行中，请等待本轮完成'); return; }
         const snap = pageSnapshot(id);
         if (!snap) return;
@@ -997,7 +1003,7 @@ export function createComicController(deps) {
         const task = { text: 'AI 正在把这一楼改编成漫画分镜…（用的是智库设置里的 AI）', current: snap.current };
         adapting.set(id, task); render(id);
         try {
-            if (deps.prepare) { await deps.prepare(id); if (!snap.current()) return; }
+            if (deps.prepare) { await deps.prepare(id); if (!snap.current()||!generationCurrent()) return; }
             const prevMsg = (c.chat || []).slice(0, id).reverse().find(m => m && !m.is_system && m.extra?.zhikuComicSrc);
             const before = prevMsg ? comicBlocks(srcOf(prevMsg)).slice(-1).map(b => b.inner).join('') : '';
             const layout = { panels:opts().comicPanels || '' };
@@ -1005,6 +1011,7 @@ export function createComicController(deps) {
             const want = pages || Number(opts().comicPages) || 6;
             const out = parseAdapt(await askLLM(system, user, { maxTokens: Math.min(16000, 3000 + 1800 * want) }));
             if (!snap.current()) return;
+            if(!generationCurrent()){notify('后续漫画已取消');return;}
             const restore = checkpoint(msg), removed = [];
             setSrc(msg, out);
             const retained = new Set(Object.values(msg.extra.zhikuComicSrc).flatMap(text => comicBlocks(text).map(b => b.key)));
@@ -1022,7 +1029,7 @@ export function createComicController(deps) {
             (deps.notifyError || notify)('第 ' + id + ' 楼没画成漫画：' + why);
             return;
         } finally { if (adapting.get(id) === task) adapting.delete(id); render(id); }
-        await process(id, { manual: true });
+        await process(id, { manual: true, generationCurrent });
     }
     let capsHidden = false; // 这次打开酒馆里先不看对白
     async function setFold(id, on) {

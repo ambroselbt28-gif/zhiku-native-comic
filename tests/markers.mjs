@@ -9,6 +9,16 @@ const notices=[],data={options:{}};
 const msg={mes:'before image###sunset### middle image###sea### after',swipe_id:0,swipes:[]};msg.swipes=[msg.mes];
 const c={chat:[msg],chatId:'one',extensionSettings:{'st-chatu8':{startTag:'image###',endTag:'###'},regex:[{id:'unrelated'}]},saveSettingsDebounced(){},async saveChat(){saves++;},updateMessageBlock(){}};
 const controller=createMarkerController({context:()=>c,getData:()=>data,generate:async prompt=>{count++;active++;peak=Math.max(peak,active);try{if(block)await block;if(fail)throw Error('test backend failure');return 'data:image/png;base64,test';}finally{active--;}},upload:async()=>({url:'/user/images/test'+(++uploads)+'.png'}),notify:(...a)=>notices.push(a)});
+// 全局取消保留当前图片，标记控制器自身的后续队列也必须清空。
+{
+    let version=0;globalThis.__zhikuGenerationControl={checkpoint:()=>{const captured=version;return()=>captured===version;}};
+    let go;block=new Promise(r=>go=r);
+    const job=controller.process(0);await new Promise(r=>setTimeout(r,0));assert.equal(count,1);
+    version++;go();await job;block=null;assert.equal(count,1);assert.equal(Object.keys(msg.extra.zhikuImages).length,1);
+    await controller.process(0,{manual:true,tokenIndices:[1]});assert.equal(count,2);
+    delete globalThis.__zhikuGenerationControl;
+    count=0;uploads=0;saves=0;delete msg.extra;
+}
 controller.syncRegex();controller.syncRegex();
 assert.equal(controller.settings().imageExpanded,true,'older data defaults to expanded images');
 data.options.imageExpanded=false;

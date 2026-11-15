@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.25';
+export const runtimeVersion = '0.8.60-native.26';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -271,7 +271,7 @@ function createProfileEditor({profiles,characters,modal,esc,preview}) {
     return {open,stop(){unsubscribe();box?.closeModal();box=null;}};
 }
 
-// 面板和悬浮入口控制同一个队列；悬浮入口在漫画阅读器打开时也可继续任务。
+// 面板和悬浮入口控制同一个队列；取消后续排队，不中断已经发出的请求。
 function createGenerationPauseControls({document:doc,queue}) {
     const style=doc.createElement('style');
     style.textContent=`.zk-generation-pause{position:fixed;left:12px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:2147481000;max-width:calc(100vw - 24px);display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:#f4efe4;color:#392a22;border:1px solid #8b7b6e;box-shadow:0 3px 14px #0003;font:14px/1.4 system-ui,sans-serif}.zk-generation-pause[hidden]{display:none!important}.zk-generation-pause button{flex-shrink:0;min-height:42px;border:0;border-radius:9px;padding:8px 12px;background:#392a22;color:#fff;font:inherit;cursor:pointer}.zk-generation-pause span{min-width:0;overflow-wrap:anywhere}.pc-generation-row{display:flex;justify-content:flex-end;padding:6px 4px}`;
@@ -279,19 +279,19 @@ function createGenerationPauseControls({document:doc,queue}) {
     const label=doc.createElement('span'),button=doc.createElement('button');button.type='button';button.dataset.generationToggle='';
     label.setAttribute('role','status');bar.append(label,button);doc.head.append(style);doc.body.append(bar);
     function render(state) {
-        bar.hidden=state.stopped||(!state.paused&&!state.pending);
-        label.textContent=state.paused?(state.active?'已暂停 · 当前请求完成后等待':'已暂停 · 等待继续'):(state.active?'正在生图':'准备生图');
+        bar.hidden=state.stopped||!state.pending;
+        label.textContent=state.cancelled?(state.active?'后续已取消 · 当前请求完成后结束':'后续队列已取消'):(state.active?'正在生图':'准备生图');
         if(state.queued)label.textContent+=' · 等待 '+state.queued+' 项';
         for(const control of doc.querySelectorAll('[data-generation-toggle]')){
-            control.textContent=state.paused?'继续生图':'暂停生图';
-            control.setAttribute('aria-pressed',String(state.paused));
-            control.title=state.paused?'按原队列继续生图':'暂停后不再开始下一次请求，已发出的请求继续完成';
+            control.textContent='取消后续生图';
+            control.removeAttribute('aria-pressed');
+            control.title='取消本轮未发出的生图和重试，当前请求完成后结束；之后可重新发起生成';
         }
     }
     function click(event) {
         if(!event.target.closest?.('[data-generation-toggle]'))return;
         event.preventDefault();event.stopPropagation();
-        if(queue.snapshot().paused)queue.resume();else queue.pause();
+        queue.cancelPending();
     }
     doc.addEventListener('click',click,true);const unsubscribe=queue.subscribe(render);
     return {refresh:()=>render(queue.snapshot()),stop(){unsubscribe();doc.removeEventListener('click',click,true);bar.remove();style.remove();}};
@@ -329,8 +329,10 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
         return { candidates: rows.filter(row => row.eligible && !row.images && !row.busy).length, images: rows.filter(row => row.eligible && row.images).length, busy: rows.filter(row => row.eligible && row.busy).length };
     }
     async function run(jobs, chat, mode, fillMissing) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         try {
             for (const job of jobs) {
+                if (!generationCurrent()){cancelled=true;break;}
                 if (cancelled || stopped) break;
                 if (chatKey(getContext()) !== chat) { state.reason = '聊天已切换，补图已停止'; break; }
                 const row = state.rows.find(row => row.id === job.id);
@@ -349,12 +351,13 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
                         if (markers.tokens) await marker.process(job.id, { manual: true, tokenIndices: markers.missing });
                         else await planner.backfill(job.id);
                     }
+                    if(!generationCurrent())cancelled=true;
                     const now = getContext();
                     if (chatKey(now) !== chat || now.chat?.[job.id] !== msg || msg.swipe_id !== job.swipe) {
                         Object.assign(row, { status: 'skipped', reason: '聊天或候选回复已变化' });
                     } else {
                         const generated = mode === 'comic' ? comic.status(job.id) : marker.status(job.id);
-                        Object.assign(row, fillMissing && mode === 'ill' && generated.missing?.length
+                        Object.assign(row, !generationCurrent() ? {status:generated.images>before.images?'done':'skipped',reason:'后续生图已取消，已完成图片保留'} : fillMissing && mode === 'ill' && generated.missing?.length
                             ? {status:'failed',reason:`仍有 ${generated.missing.length} 张普通插图未生成：${generated.error || planner.status(job.id).error || '请再次点击补图重试'}`}
                             : generated.images > 0
                             ? { status: 'done', reason: `已生成 ${generated.images} 张` }
@@ -1109,6 +1112,7 @@ function createComicController(deps) {
 
     /** 一次操作重画本楼所有页，分镜原文不变，每页保留原有版本。 */
     function redrawAll(id) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         if (isRedrawing(id)) return redrawing.get(id).job;
         const snap = pageSnapshot(id);
         if (!snap || !isComicReply(snap.msg)) return Promise.resolve(null);
@@ -1122,7 +1126,7 @@ function createComicController(deps) {
         task.job = (async () => {
             try {
                 for (const block of blocks) {
-                    if (!snap.current()) break;
+                    if (!snap.current()||!generationCurrent()) break;
                     render(id);
                     const seed = redrawSeed(curVer(rec(snap.msg, block.key))?.seed);
                     const ok = await generateOne(id, block, { seed, batch: task });
@@ -1130,7 +1134,8 @@ function createComicController(deps) {
                     task.completed++;
                     if (ok) task.success++; else task.failed++;
                 }
-                if (snap.current()) notify(`整楼重画完成，成功 ${task.success} / ${task.total} 页${task.failed ? `，失败 ${task.failed} 页，可点对应页面重试` : ''}`);
+                if (!generationCurrent()) notify('后续漫画已取消，已完成图片保留');
+                else if (snap.current()) notify(`整楼重画完成，成功 ${task.success} / ${task.total} 页${task.failed ? `，失败 ${task.failed} 页，可点对应页面重试` : ''}`);
                 return { total: task.total, success: task.success, failed: task.failed, completed: task.completed };
             } finally {
                 if (redrawing.get(id) === task) redrawing.delete(id);
@@ -1142,7 +1147,7 @@ function createComicController(deps) {
 
     /** 这楼里还没出图的页，一页一页排队出 */
     const autoAdapted = new Set();
-    async function process(id, { manual = false } = {}) {
+    async function process(id, { manual = false, generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true) } = {}) {
         if (isRedrawing(id)) return;
         if (stopped || (!manual && (!enabled() || opts().comicAuto === false))) return;
         const msg = getContext().chat?.[id];
@@ -1160,7 +1165,7 @@ function createComicController(deps) {
         render(id);
         const snap = pageSnapshot(id, blocks[0]);
         for (const b of blocks) {
-            if (!snap?.current()) break;
+            if (!snap?.current()||!generationCurrent()) break;
             if (!rec(msg, b.key)?.versions?.some(version => version.url) && !running.has(`${id}:${b.key}`)) await generateOne(id, b);
         }
     }
@@ -1363,12 +1368,14 @@ function createComicController(deps) {
                 return;
             }
             if (act === 'ai') {
+                const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
                 t.disabled = true; say('AI 正在重写这一页…');
                 try {
                     const layout = { panels:opts().comicPanels, story:storyText(msg.mes) };
                     const reference = replacePage(srcOf(msg), block.page, { image:draft, plan:'' });
                     const { system, user } = rewriteRequest(reference, block.page, box.querySelector('[data-w-req]').value, layout);
                     const out = parseRewrite(await askLLM(system, user, { maxTokens: 6000 }));
+                    if(!generationCurrent())throw new Error('后续漫画已取消');
                     if (!snap.current()) throw new Error('聊天或原文已变化，本次改写未写入');
                     box.closeModal();
                     await applyNewPage(id, block, out, snap);
@@ -1378,6 +1385,7 @@ function createComicController(deps) {
     }
     /** 把新写的一页换进这楼的正文，旧版本跟着搬过去，然后出图 */
     async function applyNewPage(id, block, page, snap = pageSnapshot(id, block)) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         if (isRedrawing(id)) return;
         if (!snap?.current()) return;
         const { c, msg, source } = snap, restore = checkpoint(msg), old = rec(msg, block.key);
@@ -1389,7 +1397,7 @@ function createComicController(deps) {
         if (!snap.current(next)) return;
         if (where === 'mes') c.updateMessageBlock?.(id, msg);
         render(id);
-        if (nb) await generateOne(id, nb);
+        if (nb&&generationCurrent()) await generateOne(id, nb);
     }
 
     // ── 漫画设置：专门一个面板（漫画书右上角「设置」、智库设置里的「漫画」都能打开） ──
@@ -1483,6 +1491,7 @@ function createComicController(deps) {
 
     // ── 把一楼画成漫画：AI 读正文写分镜，存进这楼，再一页页出图 ──
     async function adapt(id, { pages = 0, redo = false, draw = true } = {}) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         if (isRedrawing(id)) { notify('整楼重画进行中，请等待本轮完成'); return; }
         const snap = pageSnapshot(id);
         if (!snap) return;
@@ -1497,7 +1506,7 @@ function createComicController(deps) {
         const task = { text: 'AI 正在把这一楼改编成漫画分镜…（用的是智库设置里的 AI）', current: snap.current };
         adapting.set(id, task); render(id);
         try {
-            if (deps.prepare) { await deps.prepare(id); if (!snap.current()) return; }
+            if (deps.prepare) { await deps.prepare(id); if (!snap.current()||!generationCurrent()) return; }
             const prevMsg = (c.chat || []).slice(0, id).reverse().find(m => m && !m.is_system && m.extra?.zhikuComicSrc);
             const before = prevMsg ? comicBlocks(srcOf(prevMsg)).slice(-1).map(b => b.inner).join('') : '';
             const layout = { panels:opts().comicPanels || '' };
@@ -1505,6 +1514,7 @@ function createComicController(deps) {
             const want = pages || Number(opts().comicPages) || 6;
             const out = parseAdapt(await askLLM(system, user, { maxTokens: Math.min(16000, 3000 + 1800 * want) }));
             if (!snap.current()) return;
+            if(!generationCurrent()){notify('后续漫画已取消');return;}
             const restore = checkpoint(msg), removed = [];
             setSrc(msg, out);
             const retained = new Set(Object.values(msg.extra.zhikuComicSrc).flatMap(text => comicBlocks(text).map(b => b.key)));
@@ -1522,7 +1532,7 @@ function createComicController(deps) {
             (deps.notifyError || notify)('第 ' + id + ' 楼没画成漫画：' + why);
             return;
         } finally { if (adapting.get(id) === task) adapting.delete(id); render(id); }
-        if (draw) await process(id, { manual: true });
+        if (draw) await process(id, { manual: true, generationCurrent });
     }
     let capsHidden = false; // 这次打开酒馆里先不看对白
     async function setFold(id, on) {
@@ -2107,6 +2117,7 @@ function createIllustrationPlanner({ getContext, getData, settings, roster, askL
         finally { busy.delete(msg); }
     }
     async function plan(id, selection, { backfill = false } = {}) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         const c = getContext(), cfg = settings(), msg = c.chat?.[id];
         const manual=!!selection || backfill;
         const warn = message => { failures.set(msg, message); notifyWarning(message); };
@@ -2120,19 +2131,20 @@ function createIllustrationPlanner({ getContext, getData, settings, roster, askL
             const chat=chatKey(c),swipe=msg.swipe_id;
             await prepare(id);
             const now=getContext();
-            if(stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return;
+            if(!generationCurrent()||stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return;
         }
         const req = request('after', story,selection?.text), signature = String(msg.swipe_id) + source + req.system + req.user;
         if (!manual && seen.get(msg) === signature) return;
         if(!manual)seen.set(msg,signature);
         const forget=()=>{if(seen.get(msg)===signature)seen.delete(msg);};
         const chatId = chatKey(c), swipe = msg.swipe_id;
-        const current = () => { const now=getContext();return !stopped && chatKey(now) === chatId && now.chat?.[id] === msg && msg.swipe_id === swipe && String(msg.mes || '') === source; };
+        const current = () => { const now=getContext();return generationCurrent() && !stopped && chatKey(now) === chatId && now.chat?.[id] === msg && msg.swipe_id === swipe && String(msg.mes || '') === source; };
         const max = JSON.parse(req.user).imageLimit;
         onRequest(req);
         let response;
         try { response = pickJson(await askLLM(req.system, req.user, {maxTokens:Math.min(16384,1200+1600*max)})); }
         catch(e) { if (current()) warn('自动插图没写出来：'+e.message);forget();return; }
+        if(!generationCurrent()){forget();return;}
         if (!current()) { if(manual)warn('原文或聊天已变化，选段结果没有写入');return; }
         const items = Array.isArray(response?.images) ? response.images : [];
         const selected = [];
@@ -2178,7 +2190,7 @@ function createIllustrationPlanner({ getContext, getData, settings, roster, askL
         // SillyTavern 1.14.0 public/scripts/st-context.js exports eventTypes and eventSource.
         now.updateMessageBlock?.(id,msg);try{const ev=now.eventTypes||now.event_types;if(ev?.MESSAGE_UPDATED)await now.eventSource?.emit?.(ev.MESSAGE_UPDATED,id);}catch{}
         const latest=getContext();
-        if(stopped||chatKey(latest)!==chatId||latest.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==next)return;
+        if(!generationCurrent()||stopped||chatKey(latest)!==chatId||latest.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==next)return;
         await afterSave(id,{manual,tokenIndices});
         return selected.length;
     }
@@ -2535,7 +2547,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.25（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.26（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2584,7 +2596,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.25';
+globalThis.__PC_VERSION = '0.8.60-native.26';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3970,33 +3982,32 @@ function authKey() {
  * 同时返回实际发送的内容 sent，给界面展示
  */
 function createNaiGate({ sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = () => Date.now(), notice = () => {}, gap = 1500 } = {}) {
-    let queue = Promise.resolve(), next = 0, stopped = false, paused = false, pending = 0, active = 0;
-    const listeners = new Set(), resumeWaiters = new Set();
-    const snapshot = () => ({paused,stopped,active,queued:Math.max(0,pending-active),pending});
+    let queue = Promise.resolve(), next = 0, stopped = false, pending = 0, active = 0, revision = 0, cancelled = false;
+    const listeners = new Set();
+    const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
+    let interruption=deferred();
+    const cancelError=()=>Object.assign(new Error(stopped?'生图已停止':'后续生图已取消'),{name:'AbortError',generationCancelled:true});
+    const checkpoint=()=>{const version=revision;return ()=>!stopped&&version===revision;};
+    const snapshot = () => ({cancelled,stopped,active,queued:Math.max(0,pending-active),pending});
     const emit = () => { for(const listener of listeners){try{listener(snapshot());}catch{/* 界面异常不能中断生图队列。 */}} };
     let wake;
     const stopping = new Promise(resolve => { wake = resolve; });
-    function resume() { if(stopped)return;paused=false;for(const resolve of resumeWaiters)resolve();resumeWaiters.clear();emit(); }
-    function pause() { if(stopped)return;paused=true;emit(); }
-    function stop() { stopped = true;wake();for(const resolve of resumeWaiters)resolve();resumeWaiters.clear();emit();listeners.clear(); }
-    async function ready() {
-        while(paused&&!stopped)await new Promise(resolve=>resumeWaiters.add(resolve));
-        if(stopped)throw new Error('生图已停止');
-    }
+    function cancelPending() { if(stopped)return;revision++;cancelled=true;const previous=interruption;interruption=deferred();previous.resolve();emit(); }
+    function stop() { stopped=true;revision++;wake();interruption.resolve();emit();listeners.clear(); }
     function run(fn, { retryServer = true, retryNetwork = false } = {}) {
-        pending++;emit();
-        const job = queue.then(async () => {
+        const current=checkpoint(),interrupt=interruption.promise;let inRequest=false;
+        cancelled=false;pending++;emit();
+        const work = queue.then(async () => {
             for (let attempt = 0; ; attempt++) {
-                while(paused&&!stopped)await ready();
-                if(stopped)throw new Error('生图已停止');
+                if(!current())throw cancelError();
                 const delay = next - now();
-                if (delay > 0) await Promise.race([sleep(delay), stopping]);
-                // 冷却期间也可能点击暂停；所有重试同样要过这一道检查。
-                while(paused&&!stopped)await ready();
-                if(stopped)throw new Error('生图已停止');
-                active++;emit();
+                if (delay > 0) await Promise.race([sleep(delay), stopping, interrupt]);
+                // 冷却与重试开始前检查取消；当前已发出的请求允许完成。
+                if(!current())throw cancelError();
+                active++;inRequest=true;emit();
                 try { return await fn(); }
                 catch (error) {
+                    if(!current())throw cancelError();
                     const network = retryNetwork && !error.status && (error.retryableNetwork || (error.name === 'TypeError' && /fetch|network|load failed/i.test(error.message || '')));
                     const server = retryServer && (error.retryable || (error.status >= 500 && error.status <= 504));
                     if (error.name === 'AbortError' || (!network && error.status !== 429 && !server) || attempt >= 2) throw error;
@@ -4007,13 +4018,15 @@ function createNaiGate({ sleep = ms => new Promise(resolve => setTimeout(resolve
                     const reason = network ? '网络连接中断或超时' : error.status === 429 ? '请求受到限流' : 'NovelAI 服务器返回 ' + error.status;
                     notice(reason + '，等待 ' + wait + ' 秒后重试（' + (attempt + 1) + '/2）');
                     globalThis.__zkLog?.('生图重试', reason + ' · 第 ' + (attempt + 1) + ' 次重试，等 ' + wait + ' 秒');
-                } finally { active--;next = Math.max(next, now() + gap);emit(); }
+                } finally { active--;inRequest=false;next = Math.max(next, now() + gap);emit(); }
             }
-        }).finally(()=>{pending--;emit();});
-        queue = job.catch(() => {});
+        });
+        // 未发出的任务立即退队；串行链仍等待当前请求收尾，避免新任务与它并发。
+        const job=Promise.race([work,interrupt.then(()=>{if(inRequest)return work;throw cancelError();})]).finally(()=>{pending--;emit();});
+        queue = work.catch(() => {});
         return job;
     }
-    return { stop, run, pause, resume, snapshot, subscribe(listener){listeners.add(listener);listener(snapshot());return()=>listeners.delete(listener);} };
+    return { stop, run, cancelPending, checkpoint, cancelError, snapshot, subscribe(listener){listeners.add(listener);listener(snapshot());return()=>listeners.delete(listener);} };
 }
 
 const __naiGate=createNaiGate({notice:message=>toastr.info(message,'智库 · 生图排队')});
@@ -4986,6 +4999,8 @@ async function charRefs(groupIds) {
 }
 
 async function run(opts) {
+    const generationCurrent=opts.generationCurrent||globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
+    if(!generationCurrent())throw Object.assign(new Error('后续生图已取消'),{name:'AbortError',generationCancelled:true});
     if (opts.backend === 'comfy') { if (!N.comfyReady()) throw new Error('还没连上 ComfyUI，到智库「Comfy」页看看'); opts.noVibe = true; opts.director = null; }
     else if (!N.isReady()) throw new Error('还没填 NovelAI key，到「设置」最上面填');
     runtime.busy++;
@@ -4993,6 +5008,7 @@ async function run(opts) {
         if (N.settings().naiMode === 'gpt' && opts.backend !== 'comfy') opts.refs = null;
         if (!opts.noVibe && opts.director === undefined) opts.director = await charRefs();
         if (!opts.noVibe && !opts.director && opts.refs === undefined) opts.refs = await vibeRefs();
+        if(!generationCurrent())throw Object.assign(new Error('后续生图已取消'),{name:'AbortError',generationCancelled:true});
         const r = await N.generate(opts);
         const vg = getData().vibeGroups?.[getData().vibeActive];
         runtime.lastSent = { ...r.sent, vibes: opts.refs?.images?.length ? { name: vg?.name || '', n: opts.refs.images.length } : null, director: r.sent.director ?? (opts.director?.length || 0) };
@@ -5009,8 +5025,8 @@ async function generate({ pos, neg, scene = '', width, height, i2i }) {
 }
 
 /** 已经拼好的提示词（聊天生图用，可带分角色） */
-async function generateFull({ positive, negative, chars = [], width, height, director, backend, i2i, noVibe = false, src }) {
-    return run({ positive, negative, chars, width, height, director, backend, i2i, noVibe, src });
+async function generateFull({ positive, negative, chars = [], width, height, director, backend, i2i, noVibe = false, src, generationCurrent }) {
+    return run({ positive, negative, chars, width, height, director, backend, i2i, noVibe, src, generationCurrent });
 }
 
 /** 生成一张例图：画师串 + 例图模板（不带氛围和角色） */
@@ -5141,6 +5157,7 @@ async function makeSampleFor(ref, templateId, { soloWeight = getData().options.s
  * 返回 { image, saved }：画师库里有这串、又不是画角色的，照旧存进例图；别的不存，等用户勾选再存
  */
 async function makeBatchImage(job) {
+    const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
     const d = getData();
     const tpl = d.templates[job.templateId] || d.templates.sfw_bust;
     const ref = job.ref && M.resolveTicket(d, job.ref) ? job.ref : null;
@@ -5167,7 +5184,7 @@ async function makeBatchImage(job) {
     const o = d.options;
     const seed = o.sampleSameSeed === false ? undefined : (Number(o.sampleSeed) > 0 ? Number(o.sampleSeed) : (o.sampleSeed = Math.floor(Math.random() * 4294967294) + 1));
     const director = job.charRef ? await charRefs([job.charRef]) : null;
-    return { image: await run({ noVibe: true, positive, negative, width: W[0], height: W[1], seed, director }), saved: false };
+    return { image: await run({generationCurrent, noVibe: true, positive, negative, width: W[0], height: W[1], seed, director }), saved: false };
 }
 
 function createBatch(jobs, { onUpdate } = {}) {
@@ -5178,10 +5195,12 @@ function createBatch(jobs, { onUpdate } = {}) {
     const tick = () => onUpdate?.(state);
     state.run = async () => {
         if (state.running) return;
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         state.running = true; state.stopped = false; state.paused = false; tick();
         for (const job of state.jobs) {
             if (state.stopped) break;
-            while (state.paused && !state.stopped) await new Promise(r => setTimeout(r, 400));
+            while (state.paused && !state.stopped && generationCurrent()) await new Promise(r => setTimeout(r, 400));
+            if(!generationCurrent()){state.stopped=true;for(const pending of state.jobs)if(pending.status==='wait'){pending.status='skip';pending.error='后续生图已取消';}break;}
             if (state.stopped) break;
             if (job.status === 'done' || job.status === 'skip') continue;
             job.status = 'run'; tick();
@@ -6612,6 +6631,7 @@ function chatText(upTo, n = 6) {
 
 /** 给第 mesId 楼生一张图，插到这一楼后面。返回 dataUrl */
 async function generateForMessage(mesId, { onStep } = {}) {
+    const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
     if ((typeof __mod_nai === 'undefined' || __mod_nai.chatBackend?.() !== 'comfy') && !N.isReady()) throw new Error('还没填 NovelAI key，到画师库 → 设置填');
     const c = ctx();
     if (!c.chat?.[mesId]) throw new Error('找不到这一楼');
@@ -6628,7 +6648,7 @@ async function generateForMessage(mesId, { onStep } = {}) {
     // 只用出场角色在角色页里绑的角色参考
     const bound = [...new Set(picks.map(p => p.char.charRef).filter(id => id && getData().charRefGroups?.[id]))];
     const director = N.chatBackend() !== 'comfy' && bound.length ? await E.charRefs(bound) : null;
-    const image = await E.generateFull({ ...prompt, director, backend: (typeof __mod_nai !== 'undefined' && __mod_nai.chatBackend?.()) || 'nai' });
+    const image = await E.generateFull({generationCurrent, ...prompt, director, backend: (typeof __mod_nai !== 'undefined' && __mod_nai.chatBackend?.()) || 'nai' });
     await insertImage(mesId, image);
     return image;
 }
@@ -7145,10 +7165,11 @@ function createMarkerController({context,getData,generate,upload,notify,document
     }
     const chatKey=c=>String(c.getCurrentChatId?.() ?? c.chatId ?? '')+'|'+String(c.characterId ?? '')+'|'+String(c.groupId ?? '');
     async function process(id,{manual=false,tokenIndex=null,tokenIndices=null,promptOverride=null}={}) {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         const c=context(),msg=c.chat?.[id],cfg=settings();
         if(stopped||!msg||(msg.is_system&&!(manual&&isComicReply(msg)))||(!manual&&(!cfg.auto||msg.is_user)))return 0;
         const source=String(msg.mes||''),swipe=msg.swipe_id,chat=chatKey(c),all=parseImageMarkers(source,cfg.start,cfg.end);
-        if(prepare&&all.length){await prepare(id);const now=context();if(stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return 0;}
+        if(prepare&&all.length){await prepare(id);const now=context();if(!generationCurrent()||stopped||chatKey(now)!==chat||now.chat?.[id]!==msg||msg.swipe_id!==swipe||msg.mes!==source)return 0;}
         if(manual&&tokenIndex===null&&!Array.isArray(tokenIndices)&&all.length>1){notify('请点击具体提示词旁的生成按钮，一次只生成所选图片','info');decorate(id);return 0;}
         const selected=Array.isArray(tokenIndices)?all.filter((_,i)=>tokenIndices.includes(i)):tokenIndex===null?all:all.filter((_,i)=>i===tokenIndex);
         if(!selected.length){if(manual)notify('没有完整生图标记','info');return 0;}
@@ -7164,7 +7185,7 @@ function createMarkerController({context,getData,generate,upload,notify,document
             // 别的脚本改了这一楼其他地方（状态栏、正则）不算变：只要这个标记还在原位置，结果照样存
             const current=()=>!stopped&&chatKey(context())===chat&&context().chat?.[id]===msg&&msg.swipe_id===swipe&&String(msg.mes||'').slice(token.index,token.index+token.raw.length)===token.raw;
             const job=queue.then(async()=>{
-                if(!current())return 0;
+                if(!current()||!generationCurrent())return 0;
                 entry.state='生成中…';decorate(id);
                 try {
                     const prompt=promptOverride??findRecord(msg,token)?.prompt??token.prompt;
@@ -7183,7 +7204,7 @@ function createMarkerController({context,getData,generate,upload,notify,document
                     records[key]={url:String(url),prompt,versions};
                     try{await c.saveChat();}catch(e){if(old)records[key]=old;else delete records[key];if(!hadRecords&&!Object.keys(records).length)delete msg.extra.zhikuImages;if(!hadExtra&&!Object.keys(msg.extra).length)delete msg.extra;throw e;}
                     failed.get(msg)?.delete(key);return 1;
-                }catch(e){let errors=failed.get(msg);if(!errors){errors=new Map();failed.set(msg,errors);}errors.set(key,e.message||String(e));notify(e.message||String(e),'error');return 0;}
+                }catch(e){if(e.generationCancelled||!generationCurrent())return 0;let errors=failed.get(msg);if(!errors){errors=new Map();failed.set(msg,errors);}errors.set(key,e.message||String(e));notify(e.message||String(e),'error');return 0;}
             }).finally(()=>{inflight.delete(flight);map.delete(key);if(!map.size)pending.delete(msg);if(!stopped&&chatKey(context())===chat)decorate(id);});
             entry.job=job;queue=job.catch(()=>{});return job;
         });
@@ -7299,7 +7320,7 @@ const __mod_marker=createMarkerController({
             else if(lost.length){toastr.warning(`正文画师串「${tkName}」里有 ${lost.length} 个画师没进提示词：${lost.join('、')}`,'智库 · 标记生图',{timeOut:6000});}
             const srcNote=(where?.src||'正文插图')+(d.active?` · 画师串「${tkName}」${lost.length?`（缺 ${lost.length} 个画师）`:'（已带上）'}`:' · 没选画师串');
             const bound=[...new Set((hit?.cast||[]).map(ch=>ch.charRef).filter(id=>id&&d.charRefGroups?.[id]))];
-            const image=await __mod_engine.generateFull({src:srcNote,positive,negative,...(chars?.length?{chars}:{}),backend:(typeof __mod_nai!=='undefined'&&__mod_nai.chatBackend?.()||'nai'),director:__mod_nai.chatBackend?.()!=='comfy'&&bound.length?await __mod_engine.charRefs(bound):null});__mod_engine.afterChatImage();return image;},
+            const image=await __mod_engine.generateFull({generationCurrent:where?.generationCurrent,src:srcNote,positive,negative,...(chars?.length?{chars}:{}),backend:(typeof __mod_nai!=='undefined'&&__mod_nai.chatBackend?.()||'nai'),director:__mod_nai.chatBackend?.()!=='comfy'&&bound.length?await __mod_engine.charRefs(bound):null});__mod_engine.afterChatImage();return image;},
         resolveUrl:u=>pcLocal.url(u),upload:async(image,name)=>{const r=await pcStoreImage(image,name);void pcRecordImage({dataUrl:image,url:r?.url,raw:pcMarkerRaw,sent:__mod_engine.runtime.lastSent,from:'chat'}).catch(e=>console.warn('[智库] 历史生图没存上',e));return r;},notify:(message,level)=>toastr[level]?.(message,'智库 · 标记生图')
     });
 const __mod_ui = (() => {
@@ -7476,7 +7497,7 @@ function renderView() {
           <button class="pc-icon-btn ${ui.view === 'settings' ? 'on' : ''}" data-act="nav" data-view="settings" aria-label="设置">${SYM.gear}</button>
           <button class="pc-icon-btn" data-act="close" aria-label="关闭">${ICON.close}</button>
         </div>
-        <div class="pc-generation-row"><button type="button" class="pc-pill dashed" data-generation-toggle>${N.queueControl.snapshot().paused ? '继续生图' : '暂停生图'}</button></div>
+        <div class="pc-generation-row"><button type="button" class="pc-pill dashed" data-generation-toggle>取消后续生图</button></div>
         <nav class="pc-nav"><span class="pc-nav-ind" aria-hidden="true"></span>${navs.map(([k, t]) => `<button class="pc-pill ${mainView === k ? 'on' : ''}" data-act="nav" data-view="${k}">${t}</button>`).join('')}</nav>
       </header>
       <main class="pc-body"><div class="pc-page ${pageAnim(mainView)}">${VIEWS[ui.view]?.(d) || ''}</div></main>
@@ -9411,6 +9432,7 @@ function viewCharEdit(d) {
 }
 
 async function charAction(act, el) {
+    const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
     const c = C.getChar(ui.charKey);
     const d = getData();
     switch (act) {
@@ -9518,7 +9540,7 @@ async function charAction(act, el) {
                 const { positive, negative } = E.composeStudio({ pos, neg: owner?.negative || '' });
                 const director = owner?.charRef ? await E.charRefs([owner.charRef]) : undefined;
                 if (!current()) return true;
-                const img = await E.generateFull({ positive, negative, width: 768, height: 1344, director });
+                const img = await E.generateFull({generationCurrent, positive, negative, width: 768, height: 1344, director });
                 if (!current()) return true;
                 if (panel.draft) o.image = img;
                 else { const result = await uploadImage(img, `outfit_${M.uid('')}`); if (current()) { o.image = result.path; saveOutfit(); } }
@@ -9742,7 +9764,7 @@ async function charAction(act, el) {
             try {
                 const pos = M.mergeTags(d.active ? M.ticketString(d, d.active) : '', C.lookTags(c), C.tagText(o?.tags), 'solo, full body, standing, looking at viewer, simple background, white background');
                 const { positive, negative } = E.composeStudio({ pos, neg: c.negative });
-                ui.outTestImg = await E.generateFull({ positive, negative, width: 768, height: 1344, director: c.charRef ? await E.charRefs([c.charRef]) : undefined });
+                ui.outTestImg = await E.generateFull({generationCurrent, positive, negative, width: 768, height: 1344, director: c.charRef ? await E.charRefs([c.charRef]) : undefined });
             } catch (e) { toastr.error(e.message, '生成失败'); }
             ui.charBusy = ''; render();
             return true;
@@ -9854,7 +9876,7 @@ async function charAction(act, el) {
                 const W = { portrait: [1024, 1024], upper: [896, 1152], full: [768, 1344] }[shot];
                 const director = c.charRef ? await E.charRefs([c.charRef]) : undefined;
                 if (!current()) return true;
-                const image = await E.generateFull({ positive, negative, width: W[0], height: W[1], director });
+                const image = await E.generateFull({generationCurrent, positive, negative, width: W[0], height: W[1], director });
                 if (!current()) return true;
                 let cutout = null;
                 if (white) { try { cutout = await cutWhiteBg(image); } catch (e) { console.warn('[智库] 抠图', e); } }
@@ -12032,6 +12054,7 @@ async function onChangeEv(ev) {
 // ═════════════════════ 生图台动作 ═════════════════════
 
 async function doGenerate() {
+    const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
     const st = ui.studio;
     if (st.generating || st.busy) return;
     st.generating = true;
@@ -12054,7 +12077,7 @@ async function doGenerate() {
         const cast = studioCast(), p = cast.length ? C.studioCastPrompt(parts, cast) : E.composeStudio(parts);
         const ids = cast.length ? C.studioCastRefs(p.picks) : null;
         const i2i = g.image ? { image: await i2iImage(g.image, width, height), strength: g.strength ?? 0.7, noise: g.noise ?? 0 } : null;
-        st.result = await E.generateFull({ i2i, width, height, positive: p.positive, negative: p.negative, chars: p.chars || [], director: ids ? (ids.length ? await E.charRefs(ids) : null) : undefined });
+        st.result = await E.generateFull({generationCurrent, i2i, width, height, positive: p.positive, negative: p.negative, chars: p.chars || [], director: ids ? (ids.length ? await E.charRefs(ids) : null) : undefined });
         st.sent = E.runtime.lastSent;
         rememberScene(scene, sceneOn);
         // 存起来（默认本地浏览器），记到历史生图里；关掉智库、刷新页面后也能找回来
@@ -13525,7 +13548,10 @@ async function start() {
     __mod_marker.syncRegex();
     setTimeout(() => __mod_marker.refresh(), 0);
     setTimeout(() => __mod_marker.refresh(), 0);
-    const generationPause = createGenerationPauseControls({document:DOC,queue:__mod_nai.queueControl});
+    const generationControl=__mod_nai.queueControl;
+    globalThis.__zhikuGenerationControl=generationControl;
+    cleanups.push(()=>{if(globalThis.__zhikuGenerationControl===generationControl)delete globalThis.__zhikuGenerationControl;});
+    const generationPause = createGenerationPauseControls({document:DOC,queue:generationControl});
     cleanups.push(() => generationPause.stop());
     cleanups.push(() => {__mod_marker.stop();__mod_nai.stopQueue();});
     // 夜间模式：几套深色配色。样式表里用到浅色的地方，统一换成 --pcn-* 变量，每套配色只定义变量
@@ -13733,10 +13759,11 @@ async function start() {
     }
     setTimeout(() => comic.renderAll({ chatChanged: true }), 300);
     const onCharMsg = id => {
+        const generationCurrent=globalThis.__zhikuGenerationControl?.checkpoint?.()||(()=>true);
         setTimeout(async()=>{
             const c=SillyTavern.getContext(),msg=c.chat?.[Number(id)],chat=C.chatId(),body=msg?.mes,swipe=msg?.swipe_id;
             await profiles.scan(Number(id));
-            if(stopped||C.chatId()!==chat||SillyTavern.getContext().chat?.[Number(id)]!==msg||msg?.mes!==body||msg?.swipe_id!==swipe)return;
+            if(!generationCurrent()||stopped||C.chatId()!==chat||SillyTavern.getContext().chat?.[Number(id)]!==msg||msg?.mes!==body||msg?.swipe_id!==swipe)return;
             comic.render(Number(id));void comic.process(Number(id)).catch(error=>console.warn('[智库] 漫画',error));
             const o=getData().options,n=o.illustMode==='inline'?Math.max(1,Number(o.illustMax)||1):0;
             void __mod_marker.process(Number(id),n?{tokenIndices:[...Array(n).keys()]}:{}).catch(error=>console.warn('[智库] 标记生图',error));
