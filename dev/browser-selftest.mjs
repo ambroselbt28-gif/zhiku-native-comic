@@ -39,6 +39,7 @@ const presetView = runtime.slice(runtime.indexOf('function viewAiPreset(d)'), ru
 const presetEntries = runtime.slice(runtime.indexOf('function entriesFor('), runtime.indexOf('function markText('));
 const presetUse = runtime.slice(runtime.indexOf("case 'aipuse':"), runtime.indexOf("case 'aipnew':"));
 const presetCopy = runtime.slice(runtime.indexOf("case 'aipcopy':"), runtime.indexOf("case 'aiprename':"));
+networkUiModule += runtime.slice(runtime.indexOf('// 古风预设：'),runtime.indexOf('// 古风预设模块结束。'));
 networkUiModule += `
 export function mountCameraPresetTest(root) {
     const cfg={active:'plain',list:{},fn:{},markOn:{}},ui={};
@@ -50,11 +51,11 @@ export function mountCameraPresetTest(root) {
     const toastr={success(){},info(){}},render=()=>{root.innerHTML=viewAiPreset({});};
     ${presetView}
     root.addEventListener('click',event=>{const el=event.target.closest('[data-act]');if(!el)return;switch(el.dataset.act){${presetUse}${presetCopy}}});
-    render();return {cfg,entriesFor,saves:()=>saves};
+    render();return {cfg,entriesFor,saves:()=>saves,render};
 }
 `;
 networkUiModule += '\nconst DOC=document,__mod_marker={decorateAll(){}};\n' + floorButtons + '\nexport {addMesButtons};\n';
-const pauseControl=runtime.slice(runtime.indexOf('// 面板和悬浮入口控制同一个队列'),runtime.indexOf('// 只调度当前聊天'));
+const pauseControl=runtime.slice(runtime.indexOf('// 面板和悬浮入口控制同一个队列'),runtime.indexOf('// 古风预设：'));
 const gateControl=runtime.slice(runtime.indexOf('function createNaiGate('),runtime.indexOf('const __naiGate='));
 const pauseHeader=runtime.match(/<div class="pc-generation-row">[^\n]+/)[0];
 networkUiModule += pauseControl+'\n'+gateControl+'\nexport {createGenerationPauseControls,createNaiGate};\nexport function generationPauseHeader(queue){const N={queueControl:queue};return `'+pauseHeader+'`;}\n';
@@ -95,7 +96,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 137) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 143) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

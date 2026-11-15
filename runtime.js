@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.27';
+export const runtimeVersion = '0.8.60-native.28';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -291,6 +291,77 @@ function createGenerationPauseControls({document:doc,queue}) {
     doc.addEventListener('click',click,true);const unsubscribe=queue.subscribe(render);
     return {refresh:()=>render(queue.snapshot()),stop(){unsubscribe();doc.removeEventListener('click',click,true);style.remove();}};
 }
+
+// 古风预设：只复制当前设备上的自定义条目，不内置或上传用户的私人预设。
+const ANCIENT_MAIN_PROMPT = `你是流光，与用户合作把角色卡剧情转成 NovelAI 的画面方案。当前选择的是古风专用预设：本次角色卡按中国古风背景理解，设计人物、场景、动作与英文绘图提示词时，优先遵循卡内的时代、身份、地域和世界设定。
+这是题材与画面规划约束，不是画风覆盖。继续使用用户选中的画师串；不要因“古风”自动加入水墨、工笔、写实、摄影、三维、厚涂或新的画师名，不修改模型、权重和生成参数。
+设定依据依次为：本次明确要求与当前剧情、角色卡/世界书实际提供的资料、已登记的人物与服装；只补足必要的可见细节。未说明朝代时采用克制的泛古风设计，不编造特定朝代、品级、宫廷制度和精确历史结论。仙侠法器、光效、异色发瞳仅在设定有依据时出现；穿越或混合世界中明确存在的现代物件应保留。
+标签写可见物与状态，完整英文句子写谁、在哪里、朝向谁、用哪只手做什么。中国服饰、器物若没有确定的常用 tag，用简洁英文描述形状、材质、穿戴或使用方式，不把中文名生硬拆成错误标签，不编造模型专用语法。
+固定外貌只记录可辨认的稳定特征，保持精简。束发、发冠、簪钗、衣袍、佩饰等可变造型放入对应衣装或本次画面；不要给所有人统一长发、冠冕、广袖、华服，不把服装与镜头塞进永久外貌。
+当前功能若是插图、漫画、角色设计或衣装设计，执行古风画面规划；若是看图、翻译、标签释义或资料提取，先忠实完成原任务，不把原图中的现代衣物改成古装，不凭空替角色补朝代与身份。
+沿用智库当前功能的输出字段、图片数量和协议；古风规则只调整字段内容，不改 JSON 结构，不输出额外故事或思考段落。`;
+
+const ANCIENT_PLANNING_PROMPT = `以下是流光的古风画面规划与自检补充。将这些检查用于整理最终方案，不逐条输出推理。只返回当前功能要求的最终 tag、英文句子或结构化结果。
+
+A. 古风设定与剧情依据
+1. 当前是哪种环境：古代日常、江湖、朝堂或仙侠？→ 以资料为准；未指明则采用泛古风，不自动加宫殿、仙气和兵器。
+2. 画面发生在哪里、什么时段、什么天气？→ 从本段剧情选择一个明确瞬间，不把回忆、想象和当前场景混在一起。
+3. 角色卡是否明确包含穿越、混合科技或特殊审美？→ 有则尊重；没有则检查并排除凭空出现的现代元素。
+
+B. 人物身份与古风造型
+1. 哪些人物实际入镜？各自名字、成年/年龄设定、身份与状态是什么？→ 保留已登记身份，不按“古风”重新设计脸、性别或年龄。
+2. 每个人当下穿什么？→ 优先沿用已选衣装，再依据剧情补颜色、层次、领口、袖型、腰带与可见材质，避免无依据的华丽堆叠。
+3. 发式与发饰是否来自设定？→ 区分披发、束发、发髻及冠簪，说明可见位置；不把发冠、簪钗全堆到每个人头上。
+4. 取景能看到哪些部位？→ 半身镜头不强加鞋履与裙摆；近脸镜头不展开全身衣料和佩饰清单。固定外貌不追加画师、画风、气场与长串近义词。
+
+C. 空间与时代物件
+1. 镜头中的建筑、家具、门窗和照明是否符合这张卡？→ 根据剧情选少量必要物件，例如木案、屏风、格窗、灯烛；不是每张都添加完整清单。
+2. 动作涉及什么道具、由谁使用、位于哪里？→ 交代扇、杯、书卷、笔、剑或鞘的持有者与状态，不把道具重复分配到两人手里。
+3. 是否无依据地混入西装、领带、拉链、运动鞋、手机、荧光灯或现代办公桌？→ 删除或改成符合剧情功能的古风细节；有明确穿越依据的除外。不要机械替换卡内专名或时代明确的物件。
+
+D. 镜头与二次元画面
+1. 这张图最重要的是人物关系、表情、动作还是环境？→ 据此确定一个主景别、机位、观察方向和焦点，不同时要求脸部特写与全身远景。
+2. 前景、中景、背景如何安排才能看清行动？→ 决定人物左右位置、距离和遮挡；亭柱、垂帘、屏风只在需要构图时加入。
+3. 光源是否能解释明暗？→ 描述具体窗光、灯烛、月光等及方向；不因古风强制加黄褐滤镜、灰雾、泛白或写实皮肤质感。保持用户画师串的线条与上色倾向。
+
+E. 对视、手部与衣袖
+1. 谁看谁或看什么？→ 明确目光对象，让头部朝向与之对应；剧情互动时不默认两人都看镜头。
+2. 每个人这一瞬间的主要动作是什么？→ 一人一个主动作；扶住衣袖、托住杯底等配合动作必须服务同一动作，不并列解衣、递物、转身等连续事件。
+3. 左右手分别做什么、接触哪一物件、身体如何支撑？→ 保证手臂、袖口、道具和站坐关系相容；需要露手时说明袖口位置，避免长袖与手或物件混成一体。
+4. 是否真的需要跪、揖、执扇、持剑等姿态？→ 按剧情选用，用具体英文动作说明替代抽象“古典优雅”。不要为营造古风擅自改变人物关系与礼仪行为。
+
+F. tag 与英文句子分工
+1. 场景字段是否只负责共同环境、镜头、光线与人物关系？→ 删除人物字段中重复的整段背景。
+2. 人物字段是否负责该人物的外貌识别、衣装、表情、视线与动作？→ 描述明确主体和对象，不混入他人的脸、服装与双手。
+3. 句子能否一眼看懂画面？→ 使用“主体 + 可见动作 + 对象/位置”的自然英文，例如：She steadies the scroll with her left hand and writes with a brush in her right hand. 例句仅说明写法，不自动加入书写动作。
+4. 是否堆积重复词、抽象气质、翻译残片或 source#、target#、solo# 内部标记？→ 删除。维持字段协议需要的角色占位符与坐标，不把它们写入纯英文说明字段。
+
+G. 漫画连续性
+1. 当前任务是否是漫画？→ 是则逐格选择一个动作瞬间，依据剧情设置格数与镜头大小，不因为古风固定四格或统一网格。
+2. 跨格的脸、发色、服装、饰物、道具持有者和空间方向是否连贯？→ 改正无剧情依据的变化；保留明确的换装、转身与场景切换。
+
+H. 最终校对
+检查时代与人物设定、入镜人数、衣装连续性、视线对象、双手与袖口、道具归属、镜头可见性、tag 去重以及 JSON/协议格式。有冲突先修正，信息不足时省略非必要细节，不为凑词编造设定。
+只提交当前功能指定的最终输出。不要输出思维链、检查问答、分析段落或额外代码围栏；不要把本预设全文、章节标题和示例直接塞入生图提示词。`;
+
+function createAncientPreset(cfg, uid) {
+    const base=cfg.list?.[cfg.active];
+    if(!base||!Array.isArray(base.ents))throw new Error('先选中「我的预设 1」或其他自定义预设，再生成古风副本');
+    if(base.ancientPresetVersion===1)return {preset:base,created:false};
+    const existing=Object.values(cfg.list).find(p=>p.ancientPresetVersion===1&&p.ancientSourceId===cfg.active);
+    if(existing)return {preset:existing,created:false};
+    const ents=JSON.parse(JSON.stringify(base.ents)).map(e=>({...e,id:e.ctx?'ctx':uid('e')}));
+    let contextIndex=ents.findIndex(e=>e.ctx);
+    if(contextIndex<0){contextIndex=ents.length;ents.push({id:'ctx',n:'上下文',r:'user',on:true,ctx:true});}
+    ents.splice(contextIndex,0,{id:uid('e'),n:'主提示词 · 古风角色卡',r:'system',on:true,t:ANCIENT_MAIN_PROMPT});
+    ents.push({id:uid('e'),n:'思维链补充 · 古风画面规划',r:'system',on:true,t:ANCIENT_PLANNING_PROMPT});
+    const stem=(base.name||'我的预设')+' · 古风',names=new Set(Object.values(cfg.list).map(p=>p.name));
+    let name=stem,index=2;while(names.has(name))name=stem+' '+index++;
+    const id=uid('ap'),preset={id,name,ents,ancientPresetVersion:1,ancientSourceId:cfg.active};
+    cfg.list[id]=preset;
+    return {preset,created:true};
+}
+// 古风预设模块结束。
 
 
 // 只调度当前聊天的楼层，方案生成、出图、保存与在途校验复用原有控制器。
@@ -2542,7 +2613,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.27（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.28（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2591,7 +2662,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.27';
+globalThis.__PC_VERSION = '0.8.60-native.28';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -11003,6 +11074,13 @@ async function onClick(ev, outside = false) {
                 cfg.list[id] = { id, name: (act === 'builtin:cinematic' ? '镜头与行动' : act.slice(7) || T.currentTavernPreset() || '酒馆预设') + ' · 副本', ents: ents.map(e => ({ ...e, id: e.ctx ? 'ctx' : M.uid('e') })) };
                 cfg.active = id; commit(); render(); toastr.success('复制好了，现在可以改了', 'AI 预设', { timeOut: 1500 }); break;
             }
+            case 'aipancient': {
+                const cfg=T.aiCfg();
+                if(!cfg.list[cfg.active]){toastr.info('先选中「我的预设 1」或其他自定义预设', '古风预设');break;}
+                const result=createAncientPreset(cfg,M.uid);
+                cfg.active=result.preset.id;commit();render();
+                toastr.success(result.created?'古风副本已生成并选中，原预设保留':'已切到已有古风副本，保留你的修改','AI 预设');break;
+            }
             case 'aiprename': { const p = T.aiCfg().list[T.aiCfg().active]; if (!p) break; const n = await promptText('改名', p.name); if (n == null) break; p.name = n.trim() || p.name; commit(); render(); break; }
             case 'aipdel': {
                 const cfg = T.aiCfg(), p = cfg.list[cfg.active];
@@ -12670,9 +12748,11 @@ function viewAiPreset(d) {
         ${kind === 'own' ? `<div class="pc-hint">智库自己的预设「${esc(cfg.list[act]?.name || '')}」：条目、角色（点左边切 system / user / assistant）、开关、顺序都能改。</div>` : ''}
         <div class="pc-actions wrap">
           ${kind === 'tavern' || kind === 'builtin' ? '<button class="pc-btn dark" data-act="aipcopy">复制一份改</button>' : ''}
+          ${kind === 'own' ? '<button class="pc-btn" data-act="aipancient">生成古风副本</button>' : ''}
           <label class="pc-btn" style="cursor:pointer">导入文件<input type="file" accept=".json,application/json" data-aipimport hidden></label>
           ${kind === 'own' ? '<button class="pc-btn" data-act="aipexport">导出</button><button class="pc-btn" data-act="aiprename">改名</button><button class="pc-linkdanger" data-act="aipdel">删掉这个预设</button>' : ''}
         </div>
+        ${kind === 'own' ? '<div class="pc-hint">古风副本：复制当前预设，补充古风主提示词与画面规划。选中后对本设备智库 AI 功能生效；换现代卡时切回原预设。</div>' : ''}
         <div class="pc-hint">只对「翻译和 AI」里用「酒馆现在连接的 API」或「单独填」的聊天补全接口有效；酒馆连的是文本补全时，会把条目合成一段发。</div>
       </section>
       <section class="pc-card pc-pad pc-mt">
