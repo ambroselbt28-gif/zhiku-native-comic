@@ -46,6 +46,28 @@ function setup(factory, messages) {
 }
 const reply = extra => ({ name: '合成角色', mes: '角色走进咖啡馆。手里拿着一本书。', swipe_id: 0, ...extra });
 for (const [label, factory] of [['源码', createImageBackfill], ['发布代码', generated]]) {
+    // 本楼按钮：关闭自动插图时仍可选镜补图，已有成功图不重画，只补剩余标记。
+    const single=setup(factory,[reply(),reply()]);
+    let singleReport=await single.controller.fillFloor(0);
+    assert.equal(singleReport.rows.length,1);assert.equal(singleReport.rows[0].status,'done');
+    assert.equal(single.calls.filter(c=>c[0]==='ai').length,1);
+    assert(!single.context.chat[1].extra,'只处理点击楼层');
+    const spent=single.calls.length;await single.controller.fillFloor(0);assert.equal(single.calls.length,spent,'已有完整普通图不重画');
+    const partial=setup(factory,[reply({mes:'角色走进咖啡馆。image###first### image###second###'})]);
+    await partial.marker.process(0,{manual:true,tokenIndices:[0]});
+    assert.equal(partial.marker.status(0).images,1);
+    partial.fail(true);singleReport=await partial.controller.fillFloor(0);
+    assert.equal(singleReport.rows[0].status,'failed','已有一张图不掩盖另一张失败');
+    assert.match(singleReport.rows[0].reason,/仍有 1 张/);
+    partial.fail(false);singleReport=await partial.controller.fillFloor(0);
+    assert.equal(singleReport.rows[0].status,'done');assert.equal(partial.marker.status(0).images,2);
+    assert.equal(partial.calls.filter(c=>c[0]==='ai').length,0,'已有提示词不重新调用文字 AI');
+    assert.equal(partial.calls.filter(c=>c[0]==='image'&&c[1]==='first').length,1,'保留成功图片');
+    const queued=setup(factory,[reply(),reply()]);let finish;
+    queued.hold(new Promise(resolve=>{finish=resolve;}));
+    const same=queued.controller.fillFloor(0);assert.equal(queued.controller.fillFloor(0),same);
+    assert.throws(()=>queued.controller.fillFloor(1),/已有补图任务/);
+    finish();await same;
     const old = reply({ mes: '角色走进咖啡馆。image###warm cafe###' });
     const done = reply({ mes: '角色走进咖啡馆。image###saved###' });
     done.extra = { zhikuImages: { ['0:9:image###saved###']: { url: 'existing.png' } } };
@@ -175,5 +197,5 @@ for (const [label, factory] of [['源码', createImageBackfill], ['发布代码'
     assert.equal(typed.preview(0, 3, 'comic').candidates, 0);
     console.log('PASS ' + label + ' 补图范围、隐藏楼、旧标记、重试、候选、停止、切聊天、忙碌保护与漫画正式控制器');
 }
-for (const text of ["globalThis.__zhikuBackfill = backfillUI", 'backfill.chatChanged(); selectedImages.reset()', "fn: 'ill'", "fn: 'comic'", 'data-act="image-backfill"']) assert(runtime.includes(text), text);
+for (const text of ["globalThis.__zhikuBackfill = backfillGateway", 'fillFloor:backfill.fillFloor', 'backfill.chatChanged(); selectedImages.reset()', "fn: 'ill'", "fn: 'comic'", 'data-act="image-backfill"']) assert(runtime.includes(text), text);
 console.log('PASS 发布构建接入副 API、普通插图入口、漫画入口和聊天切换清理');

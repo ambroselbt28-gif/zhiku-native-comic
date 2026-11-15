@@ -7,6 +7,22 @@ export function applyImageBackfill(source) {
         assert.equal(s.split(from).length, 2, '补图构建锚点 ' + from.slice(0, 80));
         s = s.replace(from, () => to);
     };
+    patch("b.title = '智库：请在对应提示词旁点击生成';", "b.title = '智库：补本楼普通生图';\n        b.setAttribute('aria-label', '补本楼普通生图');");
+    patch('async function genFor(mesId) { await __mod_marker.process(mesId, { manual: true }); }', `async function genFor(mesId) {
+    if(genning.has(mesId))return;
+    const controller=globalThis.__zhikuBackfill;
+    if(!controller?.fillFloor){toastr.warning('普通补图模块尚未就绪，请稍后再试','智库 · 补本楼普通生图');return;}
+    genning.add(mesId);
+    const buttons=DOC.querySelectorAll('.mes[mesid="'+mesId+'"] .pc-mes-gen');
+    for(const button of buttons){button.title='正在补本楼普通生图…';button.setAttribute('aria-busy','true');}
+    try{
+        toastr.info('正在补第 '+mesId+' 楼普通插图；缺少提示词时会先调用正文插图 AI','智库 · 补本楼普通生图');
+        const result=await controller.fillFloor(mesId),row=result.rows.find(item=>item.id===mesId);
+        const message=row?.reason||result.reason||'本楼补图已结束';
+        toastr[row?.status==='failed'?'error':row?.status==='done'?'success':'info'](message,'智库 · 补本楼普通生图');
+    }catch(error){toastr.error(error?.message||String(error),'智库 · 补本楼普通生图');}
+    finally{genning.delete(mesId);for(const button of buttons){button.title='智库：补本楼普通生图';button.removeAttribute('aria-busy');}}
+}`);
     patch("            case 'comicbook':", "            case 'image-backfill': globalThis.__zhikuBackfill?.open(ui.view === 'comic' ? 'comic' : 'ill'); break;\n            case 'comicbook':");
     const bookButton = '<button class="pc-btn" data-act="comicbook">翻看这个聊天的漫画</button>';
     const darkBookButton = '<button class="pc-btn dark" data-act="comicbook">翻看这个聊天的漫画</button>';
@@ -29,8 +45,9 @@ export function applyImageBackfill(source) {
         controller: backfill, getContext: () => SillyTavern.getContext(), modal: UI.modal, esc: UI.esc,
         apiLabel: mode => { const api = __mod_translate.apiFor(mode === 'comic' ? 'comic' : 'ill'); return [api.from, api.model].filter(Boolean).join(' · ') || '跟随当前 AI 配置'; },
     });
-    globalThis.__zhikuBackfill = backfillUI;
-    cleanups.push(() => { backfill.stop(); backfillUI.stop(); if (globalThis.__zhikuBackfill === backfillUI) globalThis.__zhikuBackfill = null; });`);
+    const backfillGateway = {...backfillUI,fillFloor:backfill.fillFloor};
+    globalThis.__zhikuBackfill = backfillGateway;
+    cleanups.push(() => { backfill.stop(); backfillUI.stop(); if (globalThis.__zhikuBackfill === backfillGateway) globalThis.__zhikuBackfill = null; });`);
     patch('const onChat = () => { selectedImages.reset();', 'const onChat = () => { backfill.chatChanged(); selectedImages.reset();');
     const helpers = fs.readFileSync(new URL('../src/image-backfill.js', import.meta.url), 'utf8')
         .replace(/\r\n/g, '\n').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');

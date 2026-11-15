@@ -13,6 +13,7 @@ fs.mkdirSync(scratch, { recursive: true });
 const runtime = fs.readFileSync(path.join(root, 'runtime.js'), 'utf8');
 const controller = runtime.slice(runtime.indexOf('const COMIC_BLOCK'), runtime.indexOf('// The entire editable instruction'));
 const clickHandler = runtime.slice(runtime.indexOf('function onChatClick(ev)'), runtime.indexOf('function addMenuButton()'));
+const floorButtons = runtime.slice(runtime.indexOf('function addMesButtons()'),runtime.indexOf('function onChatClick(ev)'));
 const backfill = runtime.slice(runtime.indexOf('// 只调度当前聊天'), runtime.indexOf('const COMIC_BLOCK'));
 const characters = fs.readFileSync(path.join(root, 'src/image-characters.js'), 'utf8').replace(/^export /gm, '');
 const illustration = runtime.slice(runtime.indexOf('// The entire editable instruction'), runtime.indexOf('function createIllustrationPlanner'));
@@ -52,6 +53,7 @@ export function mountCameraPresetTest(root) {
     render();return {cfg,entriesFor,saves:()=>saves};
 }
 `;
+networkUiModule += '\nconst DOC=document,__mod_marker={decorateAll(){}};\n' + floorButtons + '\nexport {addMesButtons};\n';
 const referenceAction = runtime.match(/case 'charrefpick': ([^\n]+)/)?.[1];
 if (!referenceAction) throw new Error('缺少正式参考绑定操作');
 const module = networkUiModule + referencePicker + '\nfunction pickCharacterReference(c,el,save) {'+referenceAction+'}\n' + naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
@@ -89,7 +91,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 111) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 116) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

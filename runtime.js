@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.19';
+export const runtimeVersion = '0.8.60-native.20';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -285,7 +285,7 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
         const inline = /<img\b[^>]*\bsrc\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>]+)/i.test(body) || /!\[[^\]]*\]\(\s*[^\s)]+/.test(body);
         // 两种图片分别补缺，任一流程在途时仍共用楼层忙碌保护。
         const images = mode === 'comic' ? pages.images : illustration.images + Number(inline);
-        return { eligible: true, images, busy: illustration.busy || pages.busy || planner.status(id).busy };
+        return { eligible: true, images, missing: illustration.missing?.length || 0, busy: illustration.busy || pages.busy || planner.status(id).busy };
     }
     function range(from, to) {
         const last = (getContext().chat?.length || 0) - 1;
@@ -296,7 +296,7 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
         const rows = range(from, to).map(row => inspect(row.id, mode));
         return { candidates: rows.filter(row => row.eligible && !row.images && !row.busy).length, images: rows.filter(row => row.eligible && row.images).length, busy: rows.filter(row => row.eligible && row.busy).length };
     }
-    async function run(jobs, chat, mode) {
+    async function run(jobs, chat, mode, fillMissing) {
         try {
             for (const job of jobs) {
                 if (cancelled || stopped) break;
@@ -306,7 +306,7 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
                 if (msg !== job.msg || msg?.mes !== job.source || msg?.swipe_id !== job.swipe) {
                     Object.assign(row, { status: 'skipped', reason: '正文或候选回复已变化' }); emit(); continue;
                 }
-                if (!before.eligible || before.images || before.busy) {
+                if (!before.eligible || (before.images && !(fillMissing && mode === 'ill' && before.missing)) || before.busy) {
                     Object.assign(row, { status: 'skipped', reason: before.images ? (mode === 'comic' ? '已有漫画' : '已有普通插图') : before.busy ? '正在生成' : '没有角色正文' }); emit(); continue;
                 }
                 row.status = 'working'; emit();
@@ -322,7 +322,9 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
                         Object.assign(row, { status: 'skipped', reason: '聊天或候选回复已变化' });
                     } else {
                         const generated = mode === 'comic' ? comic.status(job.id) : marker.status(job.id);
-                        Object.assign(row, generated.images > 0
+                        Object.assign(row, fillMissing && mode === 'ill' && generated.missing?.length
+                            ? {status:'failed',reason:`仍有 ${generated.missing.length} 张普通插图未生成：${generated.error || planner.status(job.id).error || '请再次点击补图重试'}`}
+                            : generated.images > 0
                             ? { status: 'done', reason: `已生成 ${generated.images} 张` }
                             : { status: 'failed', reason: generated.error || planner.status(job.id).error || '未生成图片，请查看楼层错误和问题记录' });
                     }
@@ -338,7 +340,7 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
         }
         return snapshot();
     }
-    function start({ from, to, mode = 'ill' }) {
+    function start({ from, to, mode = 'ill', fillMissing = false }) {
         if (stopped) throw new Error('补图模块已停用，请刷新智库');
         if (state.running) return active;
         if (!['ill', 'comic'].includes(mode)) throw new Error('请选择普通插图或漫画');
@@ -346,12 +348,19 @@ function createImageBackfill({ getContext, planner, marker, comic, validate = ()
         if (!jobs.length) throw new Error('这个范围内没有可补图的角色回复');
         validate(mode);
         cancelled = false;
-        state = { running: true, stopping: false, mode, from, to, reason: '', rows: jobs.map(job => ({ id: job.id, status: 'queued', reason: '' })) };
-        active = run(jobs, chatKey(getContext()), mode);
+        state = { running: true, stopping: false, mode, from, to, fillMissing, reason: '', rows: jobs.map(job => ({ id: job.id, status: 'queued', reason: '' })) };
+        active = run(jobs, chatKey(getContext()), mode, fillMissing);
         return active;
     }
     function cancel() { if (state.running) { cancelled = true; state.stopping = true; emit(); } }
-    return { start, preview, snapshot, cancel, chatChanged: cancel,
+    function fillFloor(id) {
+        if(state.running){
+            if(state.fillMissing&&state.from===id&&state.to===id&&state.mode==='ill')return active;
+            throw new Error('已有补图任务正在进行，请完成后再补这一楼');
+        }
+        return start({from:id,to:id,mode:'ill',fillMissing:true});
+    }
+    return { start, fillFloor, preview, snapshot, cancel, chatChanged: cancel,
         subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
         stop() { stopped = true; cancel(); listeners.clear(); },
     };
@@ -2500,7 +2509,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.19（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.20（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2549,7 +2558,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.19';
+globalThis.__PC_VERSION = '0.8.60-native.20';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -13361,13 +13370,28 @@ function addMesButtons() {
         box.prepend(o);
         const b = DOC.createElement('div');
         b.className = 'mes_button pc-mes-gen fa-solid fa-image interactable';
-        b.title = '智库：请在对应提示词旁点击生成';
+        b.title = '智库：补本楼普通生图';
+        b.setAttribute('aria-label', '补本楼普通生图');
         b.tabIndex = 0;
         box.prepend(b);
     });
 }
 const genning = new Set();
-async function genFor(mesId) { await __mod_marker.process(mesId, { manual: true }); }
+async function genFor(mesId) {
+    if(genning.has(mesId))return;
+    const controller=globalThis.__zhikuBackfill;
+    if(!controller?.fillFloor){toastr.warning('普通补图模块尚未就绪，请稍后再试','智库 · 补本楼普通生图');return;}
+    genning.add(mesId);
+    const buttons=DOC.querySelectorAll('.mes[mesid="'+mesId+'"] .pc-mes-gen');
+    for(const button of buttons){button.title='正在补本楼普通生图…';button.setAttribute('aria-busy','true');}
+    try{
+        toastr.info('正在补第 '+mesId+' 楼普通插图；缺少提示词时会先调用正文插图 AI','智库 · 补本楼普通生图');
+        const result=await controller.fillFloor(mesId),row=result.rows.find(item=>item.id===mesId);
+        const message=row?.reason||result.reason||'本楼补图已结束';
+        toastr[row?.status==='failed'?'error':row?.status==='done'?'success':'info'](message,'智库 · 补本楼普通生图');
+    }catch(error){toastr.error(error?.message||String(error),'智库 · 补本楼普通生图');}
+    finally{genning.delete(mesId);for(const button of buttons){button.title='智库：补本楼普通生图';button.removeAttribute('aria-busy');}}
+}
 
 function onChatClick(ev) {
     const o = ev.target.closest?.('.pc-mes-outfit');
@@ -13626,8 +13650,9 @@ async function start() {
         controller: backfill, getContext: () => SillyTavern.getContext(), modal: UI.modal, esc: UI.esc,
         apiLabel: mode => { const api = __mod_translate.apiFor(mode === 'comic' ? 'comic' : 'ill'); return [api.from, api.model].filter(Boolean).join(' · ') || '跟随当前 AI 配置'; },
     });
-    globalThis.__zhikuBackfill = backfillUI;
-    cleanups.push(() => { backfill.stop(); backfillUI.stop(); if (globalThis.__zhikuBackfill === backfillUI) globalThis.__zhikuBackfill = null; });
+    const backfillGateway = {...backfillUI,fillFloor:backfill.fillFloor};
+    globalThis.__zhikuBackfill = backfillGateway;
+    cleanups.push(() => { backfill.stop(); backfillUI.stop(); if (globalThis.__zhikuBackfill === backfillGateway) globalThis.__zhikuBackfill = null; });
     cleanups.push(() => { comic.stop(); if (globalThis.__zhikuComic === comic) globalThis.__zhikuComic = null; });
     cleanups.push(onChange(() => comic.renderAll()));
     {

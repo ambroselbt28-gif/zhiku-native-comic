@@ -20,7 +20,7 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
         const inline = /<img\b[^>]*\bsrc\s*=\s*(?:"[^"]+"|'[^']+'|[^\s>]+)/i.test(body) || /!\[[^\]]*\]\(\s*[^\s)]+/.test(body);
         // 两种图片分别补缺，任一流程在途时仍共用楼层忙碌保护。
         const images = mode === 'comic' ? pages.images : illustration.images + Number(inline);
-        return { eligible: true, images, busy: illustration.busy || pages.busy || planner.status(id).busy };
+        return { eligible: true, images, missing: illustration.missing?.length || 0, busy: illustration.busy || pages.busy || planner.status(id).busy };
     }
     function range(from, to) {
         const last = (getContext().chat?.length || 0) - 1;
@@ -31,7 +31,7 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
         const rows = range(from, to).map(row => inspect(row.id, mode));
         return { candidates: rows.filter(row => row.eligible && !row.images && !row.busy).length, images: rows.filter(row => row.eligible && row.images).length, busy: rows.filter(row => row.eligible && row.busy).length };
     }
-    async function run(jobs, chat, mode) {
+    async function run(jobs, chat, mode, fillMissing) {
         try {
             for (const job of jobs) {
                 if (cancelled || stopped) break;
@@ -41,7 +41,7 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
                 if (msg !== job.msg || msg?.mes !== job.source || msg?.swipe_id !== job.swipe) {
                     Object.assign(row, { status: 'skipped', reason: '正文或候选回复已变化' }); emit(); continue;
                 }
-                if (!before.eligible || before.images || before.busy) {
+                if (!before.eligible || (before.images && !(fillMissing && mode === 'ill' && before.missing)) || before.busy) {
                     Object.assign(row, { status: 'skipped', reason: before.images ? (mode === 'comic' ? '已有漫画' : '已有普通插图') : before.busy ? '正在生成' : '没有角色正文' }); emit(); continue;
                 }
                 row.status = 'working'; emit();
@@ -57,7 +57,9 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
                         Object.assign(row, { status: 'skipped', reason: '聊天或候选回复已变化' });
                     } else {
                         const generated = mode === 'comic' ? comic.status(job.id) : marker.status(job.id);
-                        Object.assign(row, generated.images > 0
+                        Object.assign(row, fillMissing && mode === 'ill' && generated.missing?.length
+                            ? {status:'failed',reason:`仍有 ${generated.missing.length} 张普通插图未生成：${generated.error || planner.status(job.id).error || '请再次点击补图重试'}`}
+                            : generated.images > 0
                             ? { status: 'done', reason: `已生成 ${generated.images} 张` }
                             : { status: 'failed', reason: generated.error || planner.status(job.id).error || '未生成图片，请查看楼层错误和问题记录' });
                     }
@@ -73,7 +75,7 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
         }
         return snapshot();
     }
-    function start({ from, to, mode = 'ill' }) {
+    function start({ from, to, mode = 'ill', fillMissing = false }) {
         if (stopped) throw new Error('补图模块已停用，请刷新智库');
         if (state.running) return active;
         if (!['ill', 'comic'].includes(mode)) throw new Error('请选择普通插图或漫画');
@@ -81,12 +83,19 @@ export function createImageBackfill({ getContext, planner, marker, comic, valida
         if (!jobs.length) throw new Error('这个范围内没有可补图的角色回复');
         validate(mode);
         cancelled = false;
-        state = { running: true, stopping: false, mode, from, to, reason: '', rows: jobs.map(job => ({ id: job.id, status: 'queued', reason: '' })) };
-        active = run(jobs, chatKey(getContext()), mode);
+        state = { running: true, stopping: false, mode, from, to, fillMissing, reason: '', rows: jobs.map(job => ({ id: job.id, status: 'queued', reason: '' })) };
+        active = run(jobs, chatKey(getContext()), mode, fillMissing);
         return active;
     }
     function cancel() { if (state.running) { cancelled = true; state.stopping = true; emit(); } }
-    return { start, preview, snapshot, cancel, chatChanged: cancel,
+    function fillFloor(id) {
+        if(state.running){
+            if(state.fillMissing&&state.from===id&&state.to===id&&state.mode==='ill')return active;
+            throw new Error('已有补图任务正在进行，请完成后再补这一楼');
+        }
+        return start({from:id,to:id,mode:'ill',fillMissing:true});
+    }
+    return { start, fillFloor, preview, snapshot, cancel, chatChanged: cancel,
         subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
         stop() { stopped = true; cancel(); listeners.clear(); },
     };

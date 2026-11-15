@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
+import { addMesButtons, mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
 import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
@@ -67,6 +67,22 @@ const batchUI = createImageBackfillUI({ controller: batch, getContext: () => con
 } });
 globalThis.__zhikuBackfill = batchUI;
 window.stcrSelfTest = async () => {
+    const savedBackfill=globalThis.__zhikuBackfill,savedToast=globalThis.toastr;
+    const floorRow=document.createElement('div');floorRow.className='mes';floorRow.setAttribute('mesid','42');floorRow.innerHTML='<div class="mes_buttons"></div>';document.querySelector('#chat').append(floorRow);
+    const floorCalls=[],floorToasts=[];let finishFloor;
+    globalThis.toastr=Object.fromEntries(['info','warning','success','error'].map(type=>[type,text=>floorToasts.push([type,text])]));
+    globalThis.__zhikuBackfill={fillFloor:id=>{floorCalls.push(id);return new Promise(resolve=>{finishFloor=resolve;});}};
+    addMesButtons();const floorButton=floorRow.querySelector('.pc-mes-gen');
+    check('楼层按钮明确显示补本楼普通生图',floorButton.title==='智库：补本楼普通生图'&&floorButton.getAttribute('aria-label')==='补本楼普通生图');
+    floorButton.click();floorButton.click();
+    check('正式楼层点击只提交当前楼且阻止重复',floorCalls.length===1&&floorCalls[0]===42&&floorButton.getAttribute('aria-busy')==='true');
+    finishFloor({rows:[{id:42,status:'done',reason:'已生成 2 张'}]});await nextTurn();
+    check('补图完成显示结果并恢复按钮',floorToasts.at(-1)[0]==='success'&&!floorButton.hasAttribute('aria-busy')&&floorButton.title==='智库：补本楼普通生图');
+    globalThis.__zhikuBackfill.fillFloor=async()=>{throw Error('合成补图失败');};floorButton.click();await nextTurn();
+    check('楼层补图错误可见且按钮可重试',floorToasts.at(-1)[0]==='error'&&floorToasts.at(-1)[1].includes('合成补图失败')&&!floorButton.hasAttribute('aria-busy'));
+    globalThis.__zhikuBackfill.fillFloor=async()=>({rows:[{id:42,status:'skipped',reason:'已有普通插图'}]});floorButton.click();await nextTurn();
+    check('已有普通插图显示跳过原因',floorToasts.at(-1)[1]==='已有普通插图');
+    floorRow.remove();globalThis.__zhikuBackfill=savedBackfill;globalThis.toastr=savedToast;
     const presetBox=document.createElement('section');document.body.append(presetBox);
     const presetTest=mountCameraPresetTest(presetBox);
     presetBox.querySelector('[data-v="builtin:cinematic"]').click();
