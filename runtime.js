@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.16';
+export const runtimeVersion = '0.8.60-native.17';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -1898,11 +1898,14 @@ function compileIllustrationPlan(plan, roster, story) {
         // Count and rating are compiled once, from structured fields.
         return value.split(/[,;]+/).map(s => s.trim()).filter(s => s && !/^(?:\d+(?:boys?|girls?|others?)|solo|no humans|sfw|nsfw)$/i.test(s)).join(', ');
     };
-    // 自然语言保留完整句子；禁止串入标记协议，避免改变人物归属。
-    const narrative = value => {
+    // 完整英文句子允许正常排版与分号；先检查协议，再整理为可往返的单行文本。
+    const narrative = (value, field) => {
         if (value == null || value === '') return '';
-        if (typeof value !== 'string' || /[㐀-鿿豈-﫿$<>|;\r\n]|(?:Scene Composition|Character\s+\d+\s+(?:Prompt|UC))\s*:/i.test(value)) throw new Error('画面说明需要单行英文，不能包含人物标记或协议分隔符');
-        return value.trim();
+        const fail = reason => { throw new Error(`画面说明 ${field}：${reason}`); };
+        if (typeof value !== 'string') fail('需要英文字符串，不能是数组或对象');
+        if (/[㐀-鿿豈-﫿]/.test(value)) fail('含中文，请改成英文句子；人物名字放在 name 字段');
+        if (/[$<>|]|###|(?:Scene\s+Composition|Character\s+\d+\s+(?:Prompt|UC))\s*:/i.test(value)) fail('含人物标记或协议分隔符，请只填写英文画面说明');
+        return value.replace(/[;；]\s*/g, ', ').replace(/\s+/g, ' ').trim();
     };
     const composition = plan.composition;
     if (!composition || typeof composition !== 'object') throw new Error('画面方案缺少镜头构图 composition');
@@ -1931,10 +1934,10 @@ function compileIllustrationPlan(plan, roster, story) {
         const targetTag = gazeTarget && !/\beyes closed\b/i.test(gaze.replace(/_/g, ' ')) && !gaze.toLowerCase().includes('looking at ' + gazeTarget.toLowerCase()) ? 'looking at ' + gazeTarget : '';
         const tags = [person.registered ? '' : person.appearance, person.pose, person.body_direction, person.action, person.hands, person.interaction_role, person.expression, gaze, targetTag, person.head_direction,
             char.outfitMode === 'fixed' ? '' : person.outfit, pos.x<0.4?'on left':pos.x>0.6?'on right':'centered', pos.depth, person.tags].map(clean).filter(Boolean).join(', ');
-        picks.push({ char, tags: [tags, narrative(person.action_description)].filter(Boolean).join(', '), x:pos.x, y:pos.y });
+        picks.push({ char, tags: [tags, narrative(person.action_description, `characters[${picks.length}].action_description`)].filter(Boolean).join(', '), x:pos.x, y:pos.y });
     }
     const count = picks.length ? Object.entries(counts).filter(([,n])=>n).map(([g,n])=>`${n}${g}${n>1?'s':''}`).join(', ') : 'no humans';
-    const scene = [rating, count, clean(required('scene')), ...['shot','camera','layout','lighting'].map(k=>clean(composition[k])), clean(plan.interaction), narrative(plan.scene_description)].filter(Boolean).join(', ');
+    const scene = [rating, count, clean(required('scene')), ...['shot','camera','layout','lighting'].map(k=>clean(composition[k])), clean(plan.interaction), narrative(plan.scene_description, 'scene_description')].filter(Boolean).join(', ');
     return { scene, picks, cast, summary:{source,title,moment,rating} };
 }
 
@@ -2409,7 +2412,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.16（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.17（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2458,7 +2461,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.16';
+globalThis.__PC_VERSION = '0.8.60-native.17';
 
 // ───── model.js ─────
 const __mod_model = (() => {

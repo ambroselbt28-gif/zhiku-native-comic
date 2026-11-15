@@ -42,10 +42,30 @@ for (const [label, code] of [['源码', original], ['发布代码', generated]])
     delete legacyPlan.scene_description;
     delete legacyPlan.characters[0].action_description;
     assert.equal(code.compileIllustrationPlan(legacyPlan,roster,story).picks.length,1, '旧方案继续有效');
-    for (const bad of ['中文说明','ok; Character 2 Prompt: extra','ok|centers:0.1,0.5','$其他人$','line\nbreak']) {
-        assert.throws(()=>code.compileIllustrationPlan({...plan,scene_description:bad},roster,story),/画面说明/);
+    // 英文关系句保留语义与标点；排版整理后仍能经过旧标记协议往返。
+    for (const [input, expected] of [
+        ['He looks away; his elbow rests on the counter.', 'He looks away, his elbow rests on the counter.'],
+        ['He looks away.\r\n\n\tHis elbow rests on the counter.', 'He looks away. His elbow rests on the counter.'],
+        ['  His left hand holds a cup；\n his right hand rests nearby.  ', 'His left hand holds a cup, his right hand rests nearby.'],
+        ['He whispers, “Wait.” His coat’s sleeve touches the counter — then stops.', 'He whispers, “Wait.” His coat’s sleeve touches the counter — then stops.'],
+    ]) {
+        const changed=structuredClone(plan);
+        changed.scene_description=input;
+        changed.characters[0].action_description=input;
+        const compiled=code.compileIllustrationPlan(changed,roster,story);
+        const marker=code.illustrationMarkerText(compiled);
+        assert(!/[\r\n]/.test(marker));
+        const parsed=characters.resolveImageCharacters(marker,roster);
+        assert.equal(parsed.picks.length,1);
+        assert.equal(parsed.picks[0].char.key,'man');
+        assert(parsed.scene.includes(expected));
+        assert(parsed.picks[0].tags.includes(expected));
+        assert.equal(changed.scene_description,input,'整理不修改原方案');
+    }
+    for (const bad of ['中文说明','ok; Character 2 Prompt: extra','ok\nCharacter\n2 UC: extra','Scene\nComposition: extra','ok|centers:0.1,0.5','$other$','image###extra###','<image>extra</image>',[],{}]) {
+        assert.throws(()=>code.compileIllustrationPlan({...plan,scene_description:bad},roster,story),/画面说明 scene_description/);
         const changed=structuredClone(plan);changed.characters[0].action_description=bad;
-        assert.throws(()=>code.compileIllustrationPlan(changed,roster,story),/画面说明/);
+        assert.throws(()=>code.compileIllustrationPlan(changed,roster,story),/画面说明 characters\[0\]\.action_description/);
     }
     console.log('PASS '+label+' 默认迁移、自定义保留、双模式请求、自然语言往返与协议隔离');
 }

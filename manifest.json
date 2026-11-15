@@ -3,7 +3,7 @@
   "loading_order": 100,
   "js": "index.js",
   "author": "if love；漫画适配 ambroselbt28-gif",
-  "version": "0.8.60-native.16",
+  "version": "0.8.60-native.17",
   "homePage": "https://github.com/ambroselbt28-gif/zhiku-native-comic",
   "auto_update": true,
   "minimum_client_version": "1.14.0",

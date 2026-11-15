@@ -32,6 +32,8 @@ invalid=clone();invalid.characters[0].registered=false;invalid.characters[0].nam
 let options={illustMode:'after',illustMax:3},saved,requests=[],warnings=[],afterSaved=[];
 let context={chatId:'a',chat:[{mes:`<content>${source}</content><details>小绿状态栏</details>`,swipe_id:0,swipes:[]}],setExtensionPrompt(k,text){this.injected=text;},async saveChat(){saved=JSON.stringify(this.chat);},updateMessageBlock(){}};
 const widePlan=makePlan('sfw');widePlan.composition.shot='wide shot';
+widePlan.scene_description='The girl offers a book;\r\n her friend reaches toward it.';
+widePlan.characters[0].action_description='She holds the book in her left hand;\n her right hand rests at her side.';
 let response={images:[makePlan('sfw'),makePlan('sfw'),makePlan('nsfw'),widePlan]};
 let barrier=null;
 const planner=createIllustrationPlanner({getContext:()=>context,getData:()=>({options}),settings:()=>({start:'image###',end:'###'}),roster:()=>roster,pickJson:JSON.parse,warn:t=>warnings.push(t),onRequest:r=>requests.push(r),afterSave:id=>afterSaved.push(id),async askLLM(system,user){if(barrier)await barrier;return JSON.stringify(response);}});
@@ -40,6 +42,9 @@ assert.equal(requests.length,1);assert.equal(parseImageMarkers(context.chat[0].m
 assert(warnings.some(w=>w.includes('重复')),'duplicate plans do not spend another image request');
 const markers=parseImageMarkers(context.chat[0].mes,'image###','###');
 assert(markers[0].prompt.startsWith('Scene Composition: sfw'));assert(markers[1].prompt.startsWith('Scene Composition: nsfw'),'same-anchor insertion preserves output order');
+assert(markers[2].prompt.includes('The girl offers a book, her friend reaches toward it.'));
+assert(markers[2].prompt.includes('She holds the book in her left hand, her right hand rests at her side.'));
+assert(!warnings.some(w=>w.includes('无效画面')),'英文句子经正式自动插图入口不再被跳过');
 assert(context.chat[0].mes.lastIndexOf('image###')<context.chat[0].mes.indexOf('</content>'));
 assert.equal(context.chat[0].extra.zhikuIllustrations[0].plan.characters[0].pose,'standing');
 assert.equal(JSON.parse(requests[0].user).story,source,'status content is excluded');

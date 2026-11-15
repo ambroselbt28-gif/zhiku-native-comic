@@ -67,6 +67,29 @@ for (const [label, code] of [['源码', original], ['发布代码', generated]])
         assert.equal(a.appearance[2].en,'looking at viewer'); assert.equal(data.options.chatPositive,'looking at viewer, front view, arms at sides, cinematic lighting');
     }
     data.options.chatNoSplit=false;
+    // 自动方案里的换行、分号进入实际 NAI 参数；两个人的动作句不能串栏。
+    const prose=structuredClone(plan);
+    prose.scene_description='A phone rings;\r\n the men turn toward the table.';
+    prose.characters[0].action_description='He reaches down;\n his right hand stays above the phone.';
+    prose.characters[1].action_description='He watches quietly.\tHis hands remain at his sides.';
+    for (const simple of [false,true]) {
+        data.options.chatNoSplit=simple;
+        const marker=code.illustrationMarkerText(code.compileIllustrationPlan(prose,[{on:true,char:a},{on:true,char:b}],story));
+        const payload=buildParameters(C.markerPrompt(marker,{story}));
+        const base=payload.v4_prompt.caption.base_caption;
+        const chars=payload.v4_prompt.caption.char_captions;
+        const all=JSON.stringify({base,chars});
+        assert(all.includes('A phone rings, the men turn toward the table.'));
+        assert(all.includes('He reaches down, his right hand stays above the phone.'));
+        assert(all.includes('He watches quietly. His hands remain at his sides.'));
+        if(!simple){
+            assert.equal(chars.length,2);
+            assert(chars[0].char_caption.includes('He reaches down,'));
+            assert(!chars[1].char_caption.includes('He reaches down,'));
+            assert(!base.includes('He reaches down,'));
+        }
+    }
+    data.options.chatNoSplit=false;
     const mutual = structuredClone(plan);
     mutual.interaction='face-to-face, eye contact';
     mutual.characters.forEach(person=>{person.pose='standing';person.action='hugging';person.gaze='looking at another';person.gaze_target='other person';person.hands='arms around another';person.interaction_role='mutual#hug';});
