@@ -4,9 +4,14 @@ import vm from 'node:vm';
 import * as original from '../src/artist-member-picker.js';
 const source=fs.readFileSync(new URL('../runtime.js',import.meta.url),'utf8');
 const slice=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
-const generated=vm.runInNewContext(slice('// 画师组成员选择：','// 画师组成员选择结束。')+'\n({filterArtistLibrary,addArtistGroupMembers})');
+const generated=vm.runInNewContext(slice('// 画师组成员选择：','// 画师组成员选择结束。')+'\n({filterArtistLibrary,addArtistGroupMembers,artistExampleImages})');
 const M=vm.runInNewContext(slice('const __mod_model =','// ───── store.js')+'\n__mod_model',{structuredClone});
 for(const [label,code] of [['源码',original],['发布代码',generated]]){
+    const sample={images:[{path:'private.png',nsfw:true},{path:'first.png'},{url:'data:image/png;base64,AA'},{},null]};
+    const beforeImages=JSON.stringify(sample),images=code.artistExampleImages(sample,img=>img.url||'/'+img.path);
+    assert.equal(images.length,3);assert.equal(images[0].url,'/first.png');assert.equal(images[2].image.nsfw,true);
+    assert.equal(JSON.stringify(sample),beforeImages,'优先展示普通例图不重排原相册');
+    assert.equal(code.artistExampleImages({},()=>{throw Error('不应解析空相册');}).length,0);
     const data=M.emptyData(),ref=M.createFromString(data,{name:'已有组',text:'0.6::artist:alpha::, year 2025',forceGroup:true});
     const beta=M.ensureArtist(data,'artist:Beta_Test'),gamma=M.ensureArtist(data,'artist:gamma');beta.note='适合古风，柔和';gamma.name='伽马';
     const alpha=Object.values(data.artists).find(a=>a.tag==='artist:alpha');

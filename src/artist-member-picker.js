@@ -23,7 +23,13 @@ export function addArtistGroupMembers(data,groupId,ids,manualText,model){
     return added;
 }
 
-export function openArtistMemberPicker({getData,groupId,model,modal,esc,commit,notify}){
+export function artistExampleImages(artist,resolveUrl){
+    const images=Array.isArray(artist?.images)?artist.images:[];
+    return images.filter(image=>image&&(image.url||image.path)).map(image=>({image,url:resolveUrl(image)}))
+        .filter(item=>typeof item.url==='string'&&item.url).sort((a,b)=>Number(!!a.image.nsfw)-Number(!!b.image.nsfw));
+}
+
+export function openArtistMemberPicker({getData,groupId,model,modal,esc,commit,notify,imgUrl,openViewer}){
     const original=getData().groups?.[groupId];if(!original)return null;
     const box=modal(`<h3 class="pc-h3">从画师库添加</h3>
       <div class="pc-hint">加入「${esc(original.name||'画师组')}」。可多选，新加入的画师权重为 1，加入后可在组里调整。</div>
@@ -44,14 +50,32 @@ export function openArtistMemberPicker({getData,groupId,model,modal,esc,commit,n
         for(const id of selected)if(!data.artists?.[id]||data.groups?.[groupId]?.members.some(m=>m.artistId===id))selected.delete(id);
         find('[data-artist-count]').textContent=`找到 ${rows.length} 位 · 已选 ${selected.size} 位`;
         find('[data-artist-results]').innerHTML=rows.length?rows.slice(0,limit).map(({id,artist:a,included})=>{
-            const banned=model.banInfo?.(data,a.tag);
-            return `<label style="display:flex;align-items:center;gap:10px;padding:10px 4px;min-height:44px;box-sizing:border-box;cursor:${included?'default':'pointer'};opacity:${included?'.55':'1'}">
-              <input type="checkbox" data-artist-id="${esc(id)}" ${included?'disabled checked':selected.has(id)?'checked':''}>
-              <span style="min-width:0;overflow-wrap:anywhere"><b>${esc(a.name||a.tag.replace(/^artist:/,''))}</b><small style="display:block">${esc(a.tag)}${included?' · 已在组内':''}${banned?' · 已拉黑':''}</small>${a.note?'<small style="display:block">'+esc(String(a.note).slice(0,120))+'</small>':''}</span>
-            </label>`;
+            const banned=model.banInfo?.(data,a.tag),examples=artistExampleImages(a,imgUrl);
+            const title=a.name||a.tag.replace(/^artist:/,'');
+            const previews=examples.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 0 26px">${examples.slice(0,3).map((item,index)=>`
+                <button type="button" data-artist-preview="${esc(id)}" data-example-index="${index}" aria-label="查看 ${esc(title)} 的第 ${index+1} 张例图" style="width:68px;height:86px;padding:0;flex:0 0 68px;position:relative;border:1px solid var(--pc-dash,#aaa);border-radius:8px;overflow:hidden;cursor:pointer;background:var(--pc-paper-2,#eee);color:inherit">
+                ${item.image.nsfw?'<span style="font-size:11px">NSFW<br>点开查看</span>':`<img src="${esc(item.url)}" loading="lazy" decoding="async" alt="${esc(title)} 例图" style="display:block;width:100%;height:100%;object-fit:cover">`}
+                </button>`).join('')}<small style="align-self:center">${examples.length} 张例图 · 点开可翻看</small></div>`:'<small class="pc-dim" style="display:block;margin-left:26px">暂无例图</small>';
+            return `<div data-artist-row="${esc(id)}" style="padding:9px 4px;border-bottom:1px solid var(--pc-dash,#ddd)">
+              <label style="display:flex;align-items:center;gap:10px;min-height:44px;box-sizing:border-box;cursor:${included?'default':'pointer'};opacity:${included?'.55':'1'}">
+                <input type="checkbox" data-artist-id="${esc(id)}" ${included?'disabled checked':selected.has(id)?'checked':''}>
+                <span style="min-width:0;overflow-wrap:anywhere"><b>${esc(title)}</b><small style="display:block">${esc(a.tag)}${included?' · 已在组内':''}${banned?' · 已拉黑':''}</small>${a.note?'<small style="display:block">'+esc(String(a.note).slice(0,120))+'</small>':''}</span>
+              </label>${previews}
+            </div>`;
         }).join(''):'<div class="pc-hint">'+(Object.keys(data.artists||{}).length?'没有匹配的画师，换个关键词，或展开下方手动输入。':'画师库还是空的，可以展开下方手动输入。')+'</div>';
         find('[data-artist-more]').hidden=rows.length<=limit;updateButton();
     }
+    box.addEventListener('click',event=>{
+        const button=event.target.closest('[data-artist-preview]');if(!button)return;
+        event.preventDefault();event.stopPropagation();
+        const examples=artistExampleImages(getData().artists?.[button.dataset.artistPreview],imgUrl);
+        const current=examples[Number(button.dataset.exampleIndex)];
+        if(current)openViewer(current.url,examples.map(item=>item.url));
+    });
+    box.addEventListener('error',event=>{
+        const image=event.target;if(image.tagName!=='IMG'||!image.closest('[data-artist-preview]'))return;
+        const button=image.closest('[data-artist-preview]');button.textContent='例图加载失败';button.style.fontSize='11px';
+    },true);
     search.addEventListener('input',()=>{limit=100;render();});
     manual.addEventListener('input',updateButton);
     box.addEventListener('change',event=>{const input=event.target.closest('[data-artist-id]');if(!input||input.disabled)return;const id=input.dataset.artistId;if(input.checked)selected.add(id);else selected.delete(id);find('[data-artist-count]').textContent=`找到 ${filterArtistLibrary(getData(),groupId,search.value).length} 位 · 已选 ${selected.size} 位`;updateButton();});

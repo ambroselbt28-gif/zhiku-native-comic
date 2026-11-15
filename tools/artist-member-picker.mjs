@@ -4,7 +4,7 @@ export function applyArtistMemberPicker(source){
     const start=source.indexOf("            case 'addmember': {"),end=source.indexOf("            case 'editstring':",start);
     assert(start>=0&&end>start,'画师组添加入口');
     source=source.slice(0,start)+`            case 'addmember': {
-                openArtistMemberPicker({getData,groupId:el.dataset.id,model:M,modal,esc,commit,notify:message=>toastr.success(message,'画师组')});
+                openArtistMemberPicker({getData,groupId:el.dataset.id,model:M,modal,esc,commit,imgUrl,openViewer,notify:message=>toastr.success(message,'画师组')});
                 break;
             }
 `+source.slice(end);
