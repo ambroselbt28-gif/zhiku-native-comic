@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
+import { mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
 import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
@@ -67,6 +67,20 @@ const batchUI = createImageBackfillUI({ controller: batch, getContext: () => con
 } });
 globalThis.__zhikuBackfill = batchUI;
 window.stcrSelfTest = async () => {
+    const presetBox=document.createElement('section');document.body.append(presetBox);
+    const presetTest=mountCameraPresetTest(presetBox);
+    presetBox.querySelector('[data-v="builtin:cinematic"]').click();
+    check('镜头预设可通过正式按钮选择并保存',presetTest.cfg.active==='builtin:cinematic'&&presetTest.saves()===1);
+    check('内置预设显示条目与只读状态',presetBox.textContent.includes('镜头与行动')&&presetBox.querySelector('[data-act="aiprole"]').disabled);
+    const builtinText=presetTest.entriesFor('builtin:cinematic')[0].t;
+    presetBox.querySelector('[data-act="aipcopy"]').click();
+    const copied=presetTest.cfg.list[presetTest.cfg.active];
+    check('镜头预设可复制并进入编辑状态',copied.name==='镜头与行动 · 副本'&&copied.ents[0].t===builtinText&&!presetBox.querySelector('[data-act="aiprole"]').disabled);
+    copied.ents[0].t='自己的镜头要求';
+    check('编辑副本不改变内置默认',presetTest.entriesFor('builtin:cinematic')[0].t===builtinText);
+    presetBox.querySelector('[data-v="plain"]').click();
+    check('可切回原预设且保留镜头副本',presetTest.cfg.active==='plain'&&copied.ents[0].t==='自己的镜头要求'&&presetTest.saves()===3);
+    presetBox.remove();
     document.querySelector('.pc-mes-comic').click();
     await nextTurn();
     check('隐藏楼层的正式按钮进入漫画流程', requests.length === 1);

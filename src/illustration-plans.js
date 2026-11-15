@@ -91,7 +91,7 @@ export const NAI_STORY_GUIDANCE = `【NovelAI V5 画面表达】
 const STORY_COUNT_RULE = '必须正好写满输入 imageLimit 张，分散在正文前中后不同位置。围绕已有剧情选择不同瞬间、人物反应或景别；同一事件可补充不改变剧情的观察角度，不编造新人物、新事件或未发生的结果。';
 const LEGACY_COUNT_RULE = ILLUSTRATION_PROMPT_BASE.split('\n')[3];
 
-export const DEFAULT_ILLUSTRATION_PROMPT = LEGACY_INTERACTION_PROMPT
+const LEGACY_NAI_STORY_PROMPT = LEGACY_INTERACTION_PROMPT
     .replace(LEGACY_COUNT_RULE, STORY_COUNT_RULE)
     .replace('你负责根据小说正文选择插图瞬间，并整理画面信息。', '你负责把小说中的可见瞬间转为 NovelAI V5 插图方案，兼容标签与简短英文画面说明。')
     .replace('每个入画人物分别填写：身体姿势、朝向和重心；肢体动作、双手位置和物品；表情、视线和头部朝向；衣着状态；画面位置和前后层次。', '每个入画人物填写当前镜头可见且有意义的姿势、动作、表情、视线、服装和位置；可选细节无依据或不可见时留空，不为了填满字段增加动作。')
@@ -101,12 +101,29 @@ export const DEFAULT_ILLUSTRATION_PROMPT = LEGACY_INTERACTION_PROMPT
     .replace('action（动作）、expression', 'action（动作标签）、action_description（可选简短英文句子，说明该人物动作对象和持物归属）、expression')
     .replace('不得把人物标签合并到场景段。', '场景的简短英文关系说明放在 Scene Composition 段末尾，个人的英文动作说明放在对应 Character Prompt 段内。句子不要包含换行、分号、竖线或协议标题。不得把人物标签合并到场景段。');
 
+// 镜头与本图行动属于画面方案，不能写成角色长期固定外貌。
+export const NAI_CAMERA_GUIDANCE = `【镜头语言与行动句】
+先确定本图要让观看者读懂的一个剧情瞬间：谁正在做什么、对谁或什么做、另一人有何可见反应。以原文为依据选择，不增加事件和人物，不把动作之前与之后合并。
+再为这个瞬间设计镜头语言：选择一种主景别、机位高度、观看方向及裁切范围，安排前景/中景/背景、视觉焦点、人物间距离和遮挡，明确实际光源。互动优先让必要的手、接触位置和道具入画；情绪近景保留视线目标；环境交代可拉远。不要每张都使用平视正面半身照，也不为变化强行添加不合剧情的镜头。
+场景说明用一到两句完整英文，写清观众从哪里看到谁、关键空间关系及这一瞬间的行动。先给出明确的英文对象，例如 the seated man、the woman by the door，再使用无歧义的代词。不要把中文姓名直接放入英文说明。
+人物动作说明每人用一句简洁英文：动作主体 + 当下动作 + 对象/接触位置 + 必要的手部或身体支撑。头部朝向、身体朝向、眼睛看的对象分别服从剧情；互动不等于一起看镜头，也不强迫始终对视。背面、遮挡、裁切之外的部位不描述可见细节。
+镜头标签负责简洁定位，英文句子负责解释行动关系。不要把句子拆碎成一串抽象标签，也不要重复堆砌同义词。不要用“忧郁、气氛变化、很帅”替代可见行动。
+例如正文是一人向坐着的人递杯子：场景可写 Seen from beside the table, a standing woman offers a cup to a seated man. The cup is between them. 女方动作写 She extends her right hand with the cup toward the seated man. 男方动作写 He reaches toward the cup with his left hand while looking at it. 只在原文确有递杯动作时使用，不将示例人物或物品套到其他剧情。
+最后检查镜头是否看得到所写动作、角色身份与方向是否一致、同一只手是否冲突、句子是否只描绘一个瞬间。只输出任务规定的最终字段，不输出设计过程。`;
+
+export const NAI_SCENE_DIRECTION = NAI_CAMERA_GUIDANCE + '\n\n' + NAI_STORY_GUIDANCE;
+
+export const DEFAULT_ILLUSTRATION_PROMPT = LEGACY_NAI_STORY_PROMPT
+    .replace(NAI_STORY_GUIDANCE, NAI_SCENE_DIRECTION)
+    .replace('scene_description：一到两句简短英文，补充本图最关键的可见空间或互动关系，不重复外貌；无需补充时为 ""。', 'scene_description：一到两句完整英文，描述选定镜头下的空间关系与当下行动；空镜描述环境中的可见状态，不重复外貌。')
+    .replace('action_description（可选简短英文句子，说明该人物动作对象和持物归属）', 'action_description（一句完整英文，说明该人物当前可见的行动、对象与必要的支撑或持物归属；静止人物写当下姿态，不编造动作）');
+
 export function illustrationPrompt(options = {}) {
     const p = typeof options.illustPrompt === 'string' ? options.illustPrompt : '';
     if (!p.trim()) return DEFAULT_ILLUSTRATION_PROMPT;
     const comparable = p.replace(/\r\n/g, '\n');
     // 仅升级完整匹配的旧默认文本，玩家编辑过的文本继续原样读取。
-    const defaults = [ILLUSTRATION_PROMPT_BASE, LEGACY_INTERACTION_PROMPT, DEFAULT_ILLUSTRATION_PROMPT];
+    const defaults = [ILLUSTRATION_PROMPT_BASE, LEGACY_INTERACTION_PROMPT, LEGACY_NAI_STORY_PROMPT, DEFAULT_ILLUSTRATION_PROMPT];
     const countRules = [LEGACY_COUNT_RULE, STORY_COUNT_RULE, '遵循输入 imageLimit（玩家设置的最多张数），不自行固定张数。', '按输入 imageLimit 写满张数：正文够长就写满 imageLimit 张，分散在正文前中后不同位置；只有正文太短、实在找不出这么多不同瞬间时才少写。'];
     for (const template of defaults) {
         for (const line of countRules) {

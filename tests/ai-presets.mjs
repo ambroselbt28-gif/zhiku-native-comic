@@ -6,6 +6,14 @@ const part=(a,b)=>{const i=source.indexOf(a),j=source.indexOf(b,i);assert(i>=0&&
 const plain=x=>JSON.parse(JSON.stringify(x));
 const M=vm.runInNewContext(part('const __mod_model =','// ───── store.js')+'\n__mod_model',{structuredClone});
 let data=M.emptyData(),response='ok';const http=[],host=[];
+assert.equal(data.aiPresets.active,'builtin:cinematic','新安装采用镜头预设');
+for(const active of ['plain','tavern:','mine']) {
+    const previous={aiPresets:{active,list:{mine:{name:'保留',ents:[]}},fn:{ill:{extra:[{t:'自己的要求'}]}}}};
+    const restored=M.normalizeData(previous);
+    assert.equal(restored.aiPresets.active,active,'旧选择保留');
+    assert.equal(restored.aiPresets.fn.ill.extra[0].t,'自己的要求');
+}
+data.aiPresets.active='tavern:';
 const preset={preset_settings_openai:'Current',prompts:[{identifier:'a',role:'system',content:'before {{char}}'},{identifier:'chatHistory',marker:true},{identifier:'charDescription',marker:true},{identifier:'b',role:'assistant',content:'prefill'},{identifier:'off',role:'system',content:'disabled'}],prompt_order:[{character_id:100001,order:[{identifier:'a',enabled:true},{identifier:'charDescription',enabled:true},{identifier:'chatHistory',enabled:true},{identifier:'b',enabled:true},{identifier:'off',enabled:false}]}]};
 const context={mainApi:'openai',chatCompletionSettings:preset,substituteParams:s=>s.replace('{{char}}','Alice').replace('{{description}}','character description'),generateRaw:async r=>{host.push(plain(r));return 'host reply'}};
 const T=vm.runInNewContext(part('const __mod_translate =','const __mod_chars =')+'\n__mod_translate',{__mod_store:{getData:()=>data},__shim:{getRequestHeaders:()=>({})},SillyTavern:{getContext:()=>context},console,fetch:async(url,opts)=>{http.push({url,body:JSON.parse(opts.body)});if(url==='/api/settings/get')return {ok:true,json:async()=>({openai_setting_names:['Other'],openai_settings:[JSON.stringify({...preset,prompts:preset.prompts.map(p=>p.identifier==='a'?{...p,content:'other preset'}:p)})]})};return {ok:true,text:async()=>JSON.stringify({choices:[{message:{content:response}}]})}}});
@@ -52,4 +60,19 @@ const sync=vm.runInNewContext(part('    let lastModelKey = null;','    syncModel
 sync();assert.equal(config.novelaimode,'nai-diffusion-5-full');assert.equal(config.zkModelBefore,'nai-diffusion-3');
 data.active=b;sync();assert.equal(config.novelaimode,'nai-diffusion-4-5-full');
 data.active=null;sync();assert.equal(config.novelaimode,'nai-diffusion-3');assert.equal(config.zkModelBefore,undefined);assert.equal(saves,3);
-console.log('PASS: preset order/roles/markers, extras and format, host/custom text and vision payloads, token budget, persistence and model binding restoration.');
+// 内置预设经过真实消息组装，保留任务格式，不携带酒馆的 assistant 续写前缀。
+data.aiPresets.active='builtin:cinematic';
+data.aiPresets.fn.ill={extra:[]};
+await T.askLLM('只输出 JSON: {"images":[]}','合成正文',{fn:'ill'});
+const builtin=http.at(-1).body.messages;
+assert.equal(builtin.length,3);
+assert.match(builtin[0].content,/镜头语言/);
+assert.match(builtin[0].content,/完整英文句子/);
+assert.match(builtin[0].content,/临时动作、表情与光线留给本次画面/);
+assert.equal(builtin[1].content,'只输出 JSON: {"images":[]}');
+assert.equal(builtin[2].content,'合成正文');
+assert(!builtin.some(m=>m.role==='assistant'));
+const copy=T.entriesFor('builtin:cinematic');copy[0].t='已编辑副本';
+assert.notEqual(T.entriesFor('builtin:cinematic')[0].t,'已编辑副本','内置条目每次独立，复制编辑不污染默认');
+assert.equal(M.normalizeData(plain(data)).aiPresets.active,'builtin:cinematic');
+console.log('PASS: preset order/roles/markers, extras and format, host/custom text and vision payloads, token budget, persistence, camera preset and model binding restoration.');

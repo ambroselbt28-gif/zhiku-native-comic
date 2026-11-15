@@ -33,6 +33,7 @@ import {applyIllustrationPlans} from './illustration-plans.mjs';
 import {applyComic} from './comic.mjs';
 import {applyImageBackfill} from './image-backfill.mjs';
 import {applyStoryInteractions} from './story-interactions.mjs';
+import {applyCinematicPreset} from './cinematic-preset.mjs';
 import {applyAutoCharacterProfiles} from './auto-character-profiles.mjs';
 import {applyNaiNetwork} from './nai-network.mjs';
 import {applyCharacterReferencePicker} from './character-reference-picker.mjs';
@@ -44,8 +45,8 @@ process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 const dir='.';
 let s=applyMarkers(JSON.parse(fs.readFileSync('zhiku.script.json','utf8')).content);
 function patch(a,b){assert.equal(s.split(a).length,2,a.slice(0,80));s=s.replace(a,()=>b);}
-patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.60-native.17';");
-patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.60-native.17');
+patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.60-native.18';");
+patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · NAI5 原生漫画二改版 v0.8.60-native.18');
 patch('    const run = () => {\n        saving = saving.then(writeNow)', '    const run = () => {\n        saveTimer = null;\n        saving = saving.then(writeNow)');
 patch('return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl };', 'return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl, flush: () => saveTimer !== null ? commit({ immediate: true, silent: true }) : saving };');
 // Preserve nested API error messages and object details in both response paths.
@@ -5366,6 +5367,7 @@ patch('body=>{try{naiSent=naiRequestSnapshot(body);}catch{}},responseInfo);', `b
 patch("if(s.naiMode==='site'){p.use_coords=false;p.v4_prompt.use_coords=false;}", "if(s.naiMode==='site'&&!comic){p.use_coords=false;p.v4_prompt.use_coords=false;}");
 s=applyImageBackfill(s);
 s=applyStoryInteractions(s);
+s=applyCinematicPreset(s);
 s=applyAutoCharacterProfiles(s);
 s=applyCharacterReferencePicker(s);
 // NovelAI 用户订阅查询已迁移到图像服务域名，与上游酒馆保持一致。
@@ -5376,7 +5378,7 @@ patch('连不上${where}，请求没发出去（${e.message}）。检查网络�
 s=applyNaiNetwork(s);
 s=applyUpdateReload(s);
 const prefix=`// 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.17';
+export const runtimeVersion = '0.8.60-native.18';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -5389,9 +5391,9 @@ function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
 `;
 fs.writeFileSync(dir+'/runtime.js',(prefix+s+'\n}\n').replace(/\r\n/g, '\n'));
 fs.writeFileSync(dir+'/index.js',buildReloadEntry());
-fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.60-native.17',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete',update:'onUpdate'}},null,2)+'\n');
-fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.60-native.17',private:true,type:'module'},null,2)+'\n');
+fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库 · NAI5 原生漫画二改',loading_order:100,js:'index.js',author:'if love；漫画适配 ambroselbt28-gif',version:'0.8.60-native.18',homePage:'https://github.com/ambroselbt28-gif/zhiku-native-comic',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete',update:'onUpdate'}},null,2)+'\n');
+fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-native-comic',version:'0.8.60-native.18',private:true,type:'module'},null,2)+'\n');
 fs.writeFileSync(dir+'/capability-contract.json',JSON.stringify({schemaVersion:1,minimum:{sillytavern:'1.14.0',tavernHelper:null},requirements:[{id:'host-context',owner:'sillytavern',symbol:'SillyTavern.getContext',required:true,fallback:null}]},null,2));
 assert(!s.includes('getButtonEvent('));
 for(const key of ['piaoce_data.json','piaoce_nai','piaoce_uid','data-share-form'])assert(s.includes(key));
-console.log('智库 NAI5 原生漫画二改 0.8.60-native.17 构建完成。');
+console.log('智库 NAI5 原生漫画二改 0.8.60-native.18 构建完成。');

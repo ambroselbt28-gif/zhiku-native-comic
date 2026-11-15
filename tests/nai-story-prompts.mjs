@@ -9,7 +9,7 @@ const runtime = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8
 const start = runtime.indexOf('// The entire editable instruction');
 const end = runtime.indexOf('function createIllustrationPlanner', start);
 assert(start >= 0 && end > start);
-const generated = vm.runInNewContext(runtime.slice(start, end) + '\n({illustrationPrompt,illustrationRequest,compileIllustrationPlan,illustrationMarkerText,DEFAULT_ILLUSTRATION_PROMPT,legacy:LEGACY_INTERACTION_PROMPT})', characters);
+const generated = vm.runInNewContext(runtime.slice(start, end) + '\n({illustrationPrompt,illustrationRequest,compileIllustrationPlan,illustrationMarkerText,DEFAULT_ILLUSTRATION_PROMPT,legacy:LEGACY_INTERACTION_PROMPT,previous:LEGACY_NAI_STORY_PROMPT})', characters);
 const old = generated.legacy;
 assert(old.includes('正文里的瞬间不够时自己编'));
 const story = '墨辞坐在高脚凳上，转头看向窗外。';
@@ -23,6 +23,8 @@ const plan = {
 const roster = [{on:true,char:{key:'man',name:'墨辞',appearance:[{en:'1boy'},{en:'black hair'}],outfitMode:'story'}}];
 for (const [label, code] of [['源码', original], ['发布代码', generated]]) {
     for (const value of [old,old.replaceAll('\n','\r\n')]) assert.equal(code.illustrationPrompt({illustPrompt:value}),code.DEFAULT_ILLUSTRATION_PROMPT);
+    for(const value of [generated.previous,generated.previous.replaceAll('\n','\r\n')]) assert.equal(code.illustrationPrompt({illustPrompt:value}),code.DEFAULT_ILLUSTRATION_PROMPT,'native.17 默认完整匹配时升级');
+    assert.equal(code.illustrationPrompt({illustPrompt:generated.previous+'\n我的要求'}),generated.previous+'\n我的要求','旧默认上修改过的文本保留');
     const custom = old + '\n保留我手写的说明';
     assert.equal(code.illustrationPrompt({illustPrompt:custom}),custom, '旧默认上有自定义内容时不覆盖');
     for (const mode of ['inline','after']) {
@@ -30,6 +32,9 @@ for (const [label, code] of [['源码', original], ['发布代码', generated]])
         assert(req.system.includes('NovelAI V5'));
         assert(req.system.includes('scene_description'));
         assert(req.system.includes('action_description'));
+        assert(req.system.includes('【镜头语言与行动句】'));
+        assert(req.system.includes('action_description（一句完整英文'));
+        assert(req.system.includes('场景说明用一到两句完整英文'));
         assert(!req.system.includes('正文里的瞬间不够时自己编'));
         assert(!req.system.includes('每个标签都写成 danbooru'));
         assert.equal(JSON.parse(req.user).imageLimit,2);
@@ -81,6 +86,8 @@ const sceneFromChat=vm.runInNewContext(runtime.slice(sceneStart,sceneEnd)+'\nsce
 const result=await sceneFromChat(story,[{name:'墨辞',story:true}]);
 assert.equal(sent.options.fn,'scene');
 assert(sent.system.includes('NovelAI V5'));
+assert(sent.system.includes('【镜头语言与行动句】'));
+assert(sent.system.includes('一句完整英文行动说明'));
 assert(sent.system.includes('source#'));
 assert(!sent.system.includes('只用常见 Danbooru'));
 assert.equal(result.scene,plan.scene_description);

@@ -29,10 +29,29 @@ if (networkUiStart < 0) throw new Error('缺少联网选择界面');
 const networkChangeStart = runtime.indexOf('    if (el.dataset.st) {');
 const networkChange = runtime.slice(networkChangeStart, runtime.indexOf('    if (el.dataset.stCheck)', networkChangeStart));
 const networkAction = runtime.slice(runtime.indexOf("case 'naiprobe':"), runtime.indexOf("case 'naitest':"));
-const networkUiModule = '\nfunction renderNetworkControls(n) { return `' + networkUi + '`; }\n'
+let networkUiModule = '\nfunction renderNetworkControls(n) { return `' + networkUi + '`; }\n'
     + 'function networkSettingsChange(el,N,ui,render) {' + networkChange + '}\n'
     + 'async function runNetworkProbe(el,N,ui,render) {switch(el.dataset.act){' + networkAction + '}}\n';
 const referencePicker = runtime.slice(runtime.indexOf('// 角色参考分组：'), runtime.indexOf('// 角色参考分组结束。'));
+// 使用正式预设界面、条目读取和切换/复制处理器，配置只存在合成页面内。
+const presetView = runtime.slice(runtime.indexOf('function viewAiPreset(d)'), runtime.indexOf('/** 分享画师串时一起带上的出图参数'));
+const presetEntries = runtime.slice(runtime.indexOf('function entriesFor('), runtime.indexOf('function markText('));
+const presetUse = runtime.slice(runtime.indexOf("case 'aipuse':"), runtime.indexOf("case 'aipnew':"));
+const presetCopy = runtime.slice(runtime.indexOf("case 'aipcopy':"), runtime.indexOf("case 'aiprename':"));
+networkUiModule += `
+export function mountCameraPresetTest(root) {
+    const cfg={active:'plain',list:{},fn:{},markOn:{}},ui={};
+    const aiCfg=()=>cfg,stPresetCache=null;
+    ${presetEntries}
+    const T={aiCfg,entriesFor,currentTavernPreset:()=>'',AI_FNS:[]};
+    const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+    let id=0,saves=0;const M={uid:()=>String(++id)},commit=()=>saves++;
+    const toastr={success(){},info(){}},render=()=>{root.innerHTML=viewAiPreset({});};
+    ${presetView}
+    root.addEventListener('click',event=>{const el=event.target.closest('[data-act]');if(!el)return;switch(el.dataset.act){${presetUse}${presetCopy}}});
+    render();return {cfg,entriesFor,saves:()=>saves};
+}
+`;
 const referenceAction = runtime.match(/case 'charrefpick': ([^\n]+)/)?.[1];
 if (!referenceAction) throw new Error('缺少正式参考绑定操作');
 const module = networkUiModule + referencePicker + '\nfunction pickCharacterReference(c,el,save) {'+referenceAction+'}\n' + naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
@@ -70,7 +89,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 100) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 105) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {
