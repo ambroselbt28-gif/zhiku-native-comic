@@ -27,6 +27,17 @@ for(const word of ['monochrome','greyscale','grayscale','screentone']) assert(!r
 assert.match(req.negative,/comic_bad/);
 assert.equal(req.width,1024);assert.equal(req.height,1024);
 assert.equal(data.active.id,main.id);
+assert.equal(req.comicCfg, undefined);
+data.options.comicCfg=5.5;
+data=M.normalizeData(JSON.parse(JSON.stringify(data)));
+await ctrl.generateOne(0,comicBlocks(body)[0]);
+assert.equal(requests.at(-1).comicCfg,5.5);
+for(const value of ['',null,'bad',0,11]){
+    data.options.comicCfg=value;
+    await ctrl.generateOne(0,comicBlocks(body)[0]);
+    assert.equal(requests.at(-1).comicCfg,undefined);
+}
+delete data.options.comicCfg;
 data.options.comicPages=8;data.options.comicPanels='1–2';
 await ctrl.adapt(1);
 assert.match(adaptations[0].user,/8 页黑白网点漫画，每页 1–2 格/);

@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.21';
+export const runtimeVersion = '0.8.60-native.22';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -1080,6 +1080,8 @@ function createComicController(deps) {
             const textMode = ['draw', 'overlay', 'none'].includes(opts().comicText) ? opts().comicText : 'draw';
             const mono = opts().comicColor === 'mono' ? 'monochrome, greyscale, screentone' : '';
             const req = comicRequest(parsed, { stylePos: [st.pos, mono].filter(Boolean).join(', '), extraNeg: negativeFor(), width: w, height: h, textMode, panelPositions: opts().comicPanelPositions !== false });
+            const comicCfg = Number(opts().comicCfg);
+            if (Number.isFinite(comicCfg) && comicCfg >= 1 && comicCfg <= 10) req.comicCfg = comicCfg;
             if (seed !== undefined) req.seed = seed;
             running.set(job, 'run'); render(id);
             const r = await generatePage(req);
@@ -1451,6 +1453,9 @@ function createComicController(deps) {
               <div class="pc-hint">挡图的话调小，或者在楼层里点「隐藏对白」临时收起。想少点对白，在下面「给 AI 的改编要求」里写「对白少一点」。</div>
               <div class="pc-label">页面尺寸（跨页自动横过来）</div>
               ${seg('comicSize', [['832x1216', '竖'], ['1216x832', '横'], ['1024x1024', '方']], '832x1216')}
+              <label class="pc-field"><span>漫画独立 CFG（留空跟随正文）</span><input class="pc-input" type="number" min="1" max="10" step="0.1" data-comic-cfg value="${esc(o.comicCfg ?? '')}" placeholder="跟随 NovelAI 设置"></label>
+              <div class="pc-hint">仅覆盖 NovelAI 漫画的新生成和重画，正文参数保持原值。范围 1–10，可先用 5 做对照；清空恢复跟随。</div>
+              <div class="pc-actions"><button class="pc-pill dashed tiny" data-comic-cfg-five>漫画 CFG 设为 5</button></div>
               <div class="pc-label">「画成漫画」每楼画几页</div>
               ${seg('comicPages', [[0, '按剧情'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']], 0)}
               <div class="pc-label">每页几格</div>
@@ -1464,6 +1469,7 @@ function createComicController(deps) {
               <div class="pc-hint">改了以后对新画的页生效；已经画好的页点一下图 →「重画这一页」。</div>`;
         };
         root.addEventListener('click', ev => {
+            if (ev.target.closest('[data-comic-cfg-five]')) { opts().comicCfg = 5; commit(); draw(); return; }
             const b = ev.target.closest('[data-cs]');
             if (b) { const v = b.dataset.v; opts()[b.dataset.cs] = /^\d+$/.test(v) && b.dataset.cs === 'comicPages' ? Number(v) : v; commit(); draw(); if (b.dataset.cs === 'comicCapSize') renderAll(); return; }
             if (ev.target.closest('[data-cnegreset]')) { delete opts().comicNeg; commit(); draw(); return; }
@@ -1471,7 +1477,15 @@ function createComicController(deps) {
         });
         root.addEventListener('change', ev => {
             const t = ev.target;
-            if (t.dataset.cw) { opts()[t.dataset.cw] = t.checked; commit(); draw(); renderAll(); }
+            if (t.matches('[data-comic-cfg]')) {
+                t.setCustomValidity('');
+                if (t.validity.badInput || (t.value !== '' && (!Number.isFinite(Number(t.value)) || Number(t.value) < 1 || Number(t.value) > 10))) {
+                    t.setCustomValidity('请填写 1–10，或清空以跟随正文'); t.reportValidity(); return;
+                }
+                if (t.value === '') delete opts().comicCfg; else opts().comicCfg = Number(t.value);
+                commit();
+            }
+            else if (t.dataset.cw) { opts()[t.dataset.cw] = t.checked; commit(); draw(); renderAll(); }
             else if (t.dataset.clayout) { opts()[t.dataset.clayout] = t.value; commit(); draw(); }
             else if (t.matches('[data-cstyle]')) { opts().comicStyle = t.value; commit(); draw(); }
         });
@@ -2535,7 +2549,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.21（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.22（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2584,7 +2598,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.21';
+globalThis.__PC_VERSION = '0.8.60-native.22';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3824,7 +3838,7 @@ function skipSigma(w, h, model) {
  * chars：[{ prompt, uc, center:{x,y} }]（分角色，可不填）
  * refs：{ images:[base64], strengths:[], infos:[] }（氛围，可不填）
  */
-function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false }) {
+function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false, comicCfg = null }) {
     chars=normalizeNaiChars(chars, comic);
     const s = settings();
     const model = comic ? 'nai-diffusion-5-full' : s.novelaimode;
@@ -3836,7 +3850,7 @@ function buildParameters({ positive, negative, width, height, seed, chars = [], 
     const p = {
         params_version: isV5 ? 4 : 3,
         width: w, height: h,
-        scale: Number(s.nai3Scale) || 5,
+        scale: comic && Number.isFinite(Number(comicCfg)) && Number(comicCfg) >= 1 && Number(comicCfg) <= 10 ? Number(comicCfg) : Number(s.nai3Scale) || 5,
         sampler: s.novelai_sampler || 'k_dpmpp_2m_sde',
         steps: Number(s.novelai_steps) || 28,
         n_samples: 1,

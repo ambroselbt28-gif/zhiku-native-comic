@@ -8,10 +8,13 @@ export function applyComic(source) {
 
     // NovelAI：漫画页固定用 V5 Full，不加负面预设提示；酒馆通道画不了分人物和文字
     patch('function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null }) {\n    const s = settings();\n    const model = s.novelaimode;',
-        'function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false }) {\n    const s = settings();\n    const model = comic ? \'nai-diffusion-5-full\' : s.novelaimode;');
+        'function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false, comicCfg = null }) {\n    const s = settings();\n    const model = comic ? \'nai-diffusion-5-full\' : s.novelaimode;');
     patch("p.tag_hint_uc_preset = { heavy: 1, furryfocus: 2, light: 3, humanfocus: 4 }[k] ?? 0;", "p.tag_hint_uc_preset = comic ? 0 : { heavy: 1, furryfocus: 2, light: 3, humanfocus: 4 }[k] ?? 0;");
     patch('async function generateRequest(opts) {\n    const s = settings();\n    const model = s.novelaimode;',
         'async function generateRequest(opts) {\n    const s = settings();\n    const model = opts.comic ? \'nai-diffusion-5-full\' : s.novelaimode;\n    if (opts.comic && s.naiMode === \'tavern\') throw new Error(\'漫画要用自己的 NovelAI key：酒馆通道画不了分人物和画进图里的文字。到智库「设置 → NovelAI」改成自己填 key\');');
+
+    // 漫画请求独立覆盖 CFG，普通插图始终沿用全局设置。
+    patch('width: w, height: h,\n        scale: Number(s.nai3Scale) || 5,', 'width: w, height: h,\n        scale: comic && Number.isFinite(Number(comicCfg)) && Number(comicCfg) >= 1 && Number(comicCfg) <= 10 ? Number(comicCfg) : Number(s.nai3Scale) || 5,');
 
     // 界面：把弹窗和转义交给漫画用
     patch('return { openWindow, closeWindow, openInpaintEditor,', 'return { modal, esc, openWindow, closeWindow, openInpaintEditor,');

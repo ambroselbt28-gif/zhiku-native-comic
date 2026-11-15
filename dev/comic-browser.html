@@ -225,6 +225,14 @@ window.stcrSelfTest = async () => {
     check('参考折叠选择器不超出手机宽度', refBox.getBoundingClientRect().right<=window.innerWidth);
     refBox.remove();
     check('漫画设置显示完整分镜和留白选择', document.querySelector('[data-clayout="comicPanelStyle"]').options.length === 8 && document.querySelector('[data-clayout="comicGutter"]').options.length === 5);
+    const cfgInput=()=>document.querySelector('[data-comic-cfg]');
+    const setComicCfg=value=>{const input=cfgInput();input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}));};
+    check('漫画 CFG 默认留空跟随', cfgInput().value==='' && data.options.comicCfg===undefined);
+    document.querySelector('[data-comic-cfg-five]').click();
+    check('漫画 CFG 一键设为 5', cfgInput().value==='5' && data.options.comicCfg===5);
+    setComicCfg('5.5');check('漫画 CFG 支持小数保存',data.options.comicCfg===5.5);
+    setComicCfg('11');check('漫画 CFG 拒绝越界并保留原值',data.options.comicCfg===5.5 && !cfgInput().checkValidity());
+    setComicCfg('');check('清空漫画 CFG 恢复跟随',data.options.comicCfg===undefined && cfgInput().checkValidity());
     data.options.comicPanels = '1–2';
     const setLayout = (key, value) => { const select=document.querySelector(`[data-clayout="${key}"]`);select.value=value;select.dispatchEvent(new Event('change',{bubbles:true})); };
     setLayout('comicPanelStyle','yonkoma'); setLayout('comicGutter','boxed');

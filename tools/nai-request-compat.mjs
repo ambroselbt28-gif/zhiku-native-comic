@@ -5,7 +5,7 @@ export function applyNaiRequestCompatibility(s) {
     const start=s.indexOf('function createNaiGate('),end=s.indexOf('const __naiGate=',start);assert(start>=0&&end>start);
     s=s.slice(0,start)+fs.readFileSync('src/nai-gate.js','utf8').replace('export function','function')+'\n'+s.slice(end);
     patch("function generate(opts){opts={...opts,src:opts.src || '其他生图入口'};return __naiGate.run(()=>generateRequest(opts)).catch(e=>{throw netError(e);});}",fs.readFileSync('src/nai-request-compat.js','utf8'));
-    patch('function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false }) {','function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false }) {\n    chars=normalizeNaiChars(chars, comic);');
+    patch('function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false, comicCfg = null }) {','function buildParameters({ positive, negative, width, height, seed, chars = [], refs = null, director = null, comic = false, comicCfg = null }) {\n    chars=normalizeNaiChars(chars, comic);');
     patch('        delete p.reference_image_multiple;\n        delete p.reference_information_extracted_multiple;',`        if (isV5) {
             delete p.reference_image_multiple; delete p.reference_information_extracted_multiple;
         } else {
