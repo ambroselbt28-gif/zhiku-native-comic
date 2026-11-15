@@ -18,7 +18,7 @@ const backfill = runtime.slice(runtime.indexOf('// 只调度当前聊天'), runt
 const characters = fs.readFileSync(path.join(root, 'src/image-characters.js'), 'utf8').replace(/^export /gm, '');
 const illustration = runtime.slice(runtime.indexOf('// The entire editable instruction'), runtime.indexOf('function createIllustrationPlanner'));
 const illustrationEditor = runtime.slice(runtime.indexOf('function renderIllustrationEditor'), runtime.indexOf('function selectionTextMap'));
-const profiles = runtime.slice(runtime.indexOf('// 自动人物建档与外貌方案版本'), runtime.indexOf('// 只调度当前聊天'));
+const profiles = runtime.slice(runtime.indexOf('// 自动人物建档与外貌方案版本'), runtime.indexOf('// 面板和悬浮入口控制同一个队列'));
 const markers = runtime.slice(runtime.indexOf('// Marker-triggered generation'), runtime.indexOf('const pcLocal ='));
 const profileActions = runtime.slice(runtime.indexOf("case 'profile-open':"), runtime.indexOf("case 'casttab':", runtime.indexOf("case 'profile-open':")));
 const backfillAction = runtime.slice(runtime.indexOf("case 'image-backfill':"), runtime.indexOf("case 'comicbook':", runtime.indexOf("case 'image-backfill':")));
@@ -54,6 +54,10 @@ export function mountCameraPresetTest(root) {
 }
 `;
 networkUiModule += '\nconst DOC=document,__mod_marker={decorateAll(){}};\n' + floorButtons + '\nexport {addMesButtons};\n';
+const pauseControl=runtime.slice(runtime.indexOf('// 面板和悬浮入口控制同一个队列'),runtime.indexOf('// 只调度当前聊天'));
+const gateControl=runtime.slice(runtime.indexOf('function createNaiGate('),runtime.indexOf('const __naiGate='));
+const pauseHeader=runtime.match(/<div class="pc-generation-row">[^\n]+/)[0];
+networkUiModule += pauseControl+'\n'+gateControl+'\nexport {createGenerationPauseControls,createNaiGate};\nexport function generationPauseHeader(queue){const N={queueControl:queue};return `'+pauseHeader+'`;}\n';
 const referenceAction = runtime.match(/case 'charrefpick': ([^\n]+)/)?.[1];
 if (!referenceAction) throw new Error('缺少正式参考绑定操作');
 const module = networkUiModule + referencePicker + '\nfunction pickCharacterReference(c,el,save) {'+referenceAction+'}\n' + naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
@@ -91,7 +95,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 116) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 124) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

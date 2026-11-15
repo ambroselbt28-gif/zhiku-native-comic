@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.20';
+export const runtimeVersion = '0.8.60-native.21';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -263,6 +263,32 @@ function createProfileEditor({profiles,characters,modal,esc,preview}) {
         unsubscribe=profiles.subscribe(()=>{if(currentBox.isConnected)render();else unsubscribe();});render();return currentBox;
     }
     return {open,stop(){unsubscribe();box?.closeModal();box=null;}};
+}
+
+// 面板和悬浮入口控制同一个队列；悬浮入口在漫画阅读器打开时也可继续任务。
+function createGenerationPauseControls({document:doc,queue}) {
+    const style=doc.createElement('style');
+    style.textContent=`.zk-generation-pause{position:fixed;left:12px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:2147481000;max-width:calc(100vw - 24px);display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:#f4efe4;color:#392a22;border:1px solid #8b7b6e;box-shadow:0 3px 14px #0003;font:14px/1.4 system-ui,sans-serif}.zk-generation-pause[hidden]{display:none!important}.zk-generation-pause button{flex-shrink:0;min-height:42px;border:0;border-radius:9px;padding:8px 12px;background:#392a22;color:#fff;font:inherit;cursor:pointer}.zk-generation-pause span{min-width:0;overflow-wrap:anywhere}.pc-generation-row{display:flex;justify-content:flex-end;padding:6px 4px}`;
+    const bar=doc.createElement('div');bar.className='zk-generation-pause';bar.hidden=true;
+    const label=doc.createElement('span'),button=doc.createElement('button');button.type='button';button.dataset.generationToggle='';
+    label.setAttribute('role','status');bar.append(label,button);doc.head.append(style);doc.body.append(bar);
+    function render(state) {
+        bar.hidden=state.stopped||(!state.paused&&!state.pending);
+        label.textContent=state.paused?(state.active?'已暂停 · 当前请求完成后等待':'已暂停 · 等待继续'):(state.active?'正在生图':'准备生图');
+        if(state.queued)label.textContent+=' · 等待 '+state.queued+' 项';
+        for(const control of doc.querySelectorAll('[data-generation-toggle]')){
+            control.textContent=state.paused?'继续生图':'暂停生图';
+            control.setAttribute('aria-pressed',String(state.paused));
+            control.title=state.paused?'按原队列继续生图':'暂停后不再开始下一次请求，已发出的请求继续完成';
+        }
+    }
+    function click(event) {
+        if(!event.target.closest?.('[data-generation-toggle]'))return;
+        event.preventDefault();event.stopPropagation();
+        if(queue.snapshot().paused)queue.resume();else queue.pause();
+    }
+    doc.addEventListener('click',click,true);const unsubscribe=queue.subscribe(render);
+    return {refresh:()=>render(queue.snapshot()),stop(){unsubscribe();doc.removeEventListener('click',click,true);bar.remove();style.remove();}};
 }
 
 
@@ -2509,7 +2535,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.20（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.21（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2558,7 +2584,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.20';
+globalThis.__PC_VERSION = '0.8.60-native.21';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3944,17 +3970,31 @@ function authKey() {
  * 同时返回实际发送的内容 sent，给界面展示
  */
 function createNaiGate({ sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = () => Date.now(), notice = () => {}, gap = 1500 } = {}) {
-    let queue = Promise.resolve(), next = 0, stopped = false;
+    let queue = Promise.resolve(), next = 0, stopped = false, paused = false, pending = 0, active = 0;
+    const listeners = new Set(), resumeWaiters = new Set();
+    const snapshot = () => ({paused,stopped,active,queued:Math.max(0,pending-active),pending});
+    const emit = () => { for(const listener of listeners){try{listener(snapshot());}catch{/* 界面异常不能中断生图队列。 */}} };
     let wake;
     const stopping = new Promise(resolve => { wake = resolve; });
-    function stop() { stopped = true; wake(); }
+    function resume() { if(stopped)return;paused=false;for(const resolve of resumeWaiters)resolve();resumeWaiters.clear();emit(); }
+    function pause() { if(stopped)return;paused=true;emit(); }
+    function stop() { stopped = true;wake();for(const resolve of resumeWaiters)resolve();resumeWaiters.clear();emit();listeners.clear(); }
+    async function ready() {
+        while(paused&&!stopped)await new Promise(resolve=>resumeWaiters.add(resolve));
+        if(stopped)throw new Error('生图已停止');
+    }
     function run(fn, { retryServer = true, retryNetwork = false } = {}) {
+        pending++;emit();
         const job = queue.then(async () => {
             for (let attempt = 0; ; attempt++) {
-                if (stopped) throw new Error('生图已停止');
+                while(paused&&!stopped)await ready();
+                if(stopped)throw new Error('生图已停止');
                 const delay = next - now();
                 if (delay > 0) await Promise.race([sleep(delay), stopping]);
-                if (stopped) throw new Error('生图已停止');
+                // 冷却期间也可能点击暂停；所有重试同样要过这一道检查。
+                while(paused&&!stopped)await ready();
+                if(stopped)throw new Error('生图已停止');
+                active++;emit();
                 try { return await fn(); }
                 catch (error) {
                     const network = retryNetwork && !error.status && (error.retryableNetwork || (error.name === 'TypeError' && /fetch|network|load failed/i.test(error.message || '')));
@@ -3967,13 +4007,13 @@ function createNaiGate({ sleep = ms => new Promise(resolve => setTimeout(resolve
                     const reason = network ? '网络连接中断或超时' : error.status === 429 ? '请求受到限流' : 'NovelAI 服务器返回 ' + error.status;
                     notice(reason + '，等待 ' + wait + ' 秒后重试（' + (attempt + 1) + '/2）');
                     globalThis.__zkLog?.('生图重试', reason + ' · 第 ' + (attempt + 1) + ' 次重试，等 ' + wait + ' 秒');
-                } finally { next = Math.max(next, now() + gap); }
+                } finally { active--;next = Math.max(next, now() + gap);emit(); }
             }
-        });
+        }).finally(()=>{pending--;emit();});
         queue = job.catch(() => {});
         return job;
     }
-    return { stop, run };
+    return { stop, run, pause, resume, snapshot, subscribe(listener){listeners.add(listener);listener(snapshot());return()=>listeners.delete(listener);} };
 }
 
 const __naiGate=createNaiGate({notice:message=>toastr.info(message,'智库 · 生图排队')});
@@ -4827,7 +4867,7 @@ async function inpaintRequest({ image, mask, prompt, negative, width, height, st
     return imageFromResponse(buf);
 }
 
-return { comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();naiNetwork.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, probeNaiNetwork, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
+return { comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, queueControl:__naiGate, stopQueue:()=>{siteStopped=true;__naiGate.stop();naiNetwork.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, probeNaiNetwork, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
 })();
 
 // ───── engine.js ─────
@@ -7436,6 +7476,7 @@ function renderView() {
           <button class="pc-icon-btn ${ui.view === 'settings' ? 'on' : ''}" data-act="nav" data-view="settings" aria-label="设置">${SYM.gear}</button>
           <button class="pc-icon-btn" data-act="close" aria-label="关闭">${ICON.close}</button>
         </div>
+        <div class="pc-generation-row"><button type="button" class="pc-pill dashed" data-generation-toggle>${N.queueControl.snapshot().paused ? '继续生图' : '暂停生图'}</button></div>
         <nav class="pc-nav"><span class="pc-nav-ind" aria-hidden="true"></span>${navs.map(([k, t]) => `<button class="pc-pill ${mainView === k ? 'on' : ''}" data-act="nav" data-view="${k}">${t}</button>`).join('')}</nav>
       </header>
       <main class="pc-body"><div class="pc-page ${pageAnim(mainView)}">${VIEWS[ui.view]?.(d) || ''}</div></main>
@@ -13470,6 +13511,8 @@ async function start() {
     __mod_marker.syncRegex();
     setTimeout(() => __mod_marker.refresh(), 0);
     setTimeout(() => __mod_marker.refresh(), 0);
+    const generationPause = createGenerationPauseControls({document:DOC,queue:__mod_nai.queueControl});
+    cleanups.push(() => generationPause.stop());
     cleanups.push(() => {__mod_marker.stop();__mod_nai.stopQueue();});
     // 夜间模式：几套深色配色。样式表里用到浅色的地方，统一换成 --pcn-* 变量，每套配色只定义变量
     const NIGHT_THEMES = {

@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {createNaiGate} from '../src/nai-gate.js';
+const runtime=fs.readFileSync(new URL('../runtime.js',import.meta.url),'utf8');
+const begin=runtime.indexOf('function createNaiGate('),end=runtime.indexOf('const __naiGate=',begin);
+const generated=vm.runInNewContext(runtime.slice(begin,end)+'\ncreateNaiGate',{setTimeout,Date});
+const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
+const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {resolve,promise};};
+for(const [label,factory] of [['源码',createNaiGate],['发布代码',generated]]){
+    const gate=factory({gap:0}),calls=[],states=[];gate.subscribe(state=>states.push(state));
+    gate.pause();const a=gate.run(async()=>{calls.push('a');return 'A';}),b=gate.run(async()=>{calls.push('b');return 'B';});
+    await tick();assert.equal(calls.length,0);assert.equal(gate.snapshot().queued,2);
+    gate.resume();assert.deepEqual(await Promise.all([a,b]),['A','B']);assert.deepEqual(calls,['a','b']);assert.equal(gate.snapshot().pending,0);
+    const hold=deferred();const current=gate.run(async()=>{calls.push('current');await hold.promise;return 'complete';});
+    await tick();gate.pause();const next=gate.run(async()=>{calls.push('next');return 'next';});
+    assert.equal(gate.snapshot().active,1);hold.resolve();assert.equal(await current,'complete');await tick();
+    assert(!calls.includes('next'),'暂停不取消当前请求，也不开始下一张');
+    gate.resume();gate.pause();await tick();assert(!calls.includes('next'),'恢复后立即暂停仍不能漏发');gate.resume();assert.equal(await next,'next');
+    gate.pause();const cancelled=gate.run(()=>{throw Error('不应发送');});gate.stop();await assert.rejects(cancelled,/已停止/);
+    assert.equal(gate.snapshot().pending,0);gate.resume();assert(gate.snapshot().stopped);
+    assert(states.some(s=>s.paused&&s.active===1));
+    let time=0,tries=0;const retryWait=deferred();
+    const retry=factory({gap:0,now:()=>time,sleep:async ms=>{await retryWait.promise;time+=ms;}});
+    const job=retry.run(async()=>{tries++;if(tries===1)throw Object.assign(Error('限流'),{status:429});return 'ok';});
+    await tick();retry.pause();retryWait.resolve();await tick();assert.equal(tries,1,'暂停期间不能发自动重试');retry.resume();assert.equal(await job,'ok');assert.equal(tries,2);retry.stop();
+    console.log('PASS '+label+' 暂停未发任务、当前请求完成、恢复顺序、防漏发、停止释放与重试暂停');
+}
+assert(runtime.includes('queueControl:__naiGate'));
+assert(runtime.includes('createGenerationPauseControls({document:DOC,queue:__mod_nai.queueControl})'));
+assert(runtime.includes('data-generation-toggle'));
+console.log('PASS 全局队列接口与正式面板/悬浮控制器接线');

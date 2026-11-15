@@ -18,6 +18,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <pre id="results">运行中</pre>
 <script type="module">
 import { addMesButtons, mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
+import {createGenerationPauseControls,createNaiGate,generationPauseHeader} from './runtime-comic.js';
 import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, profileAction } from './runtime-comic.js';
 const checks = [];
 function check(name, value) {
@@ -67,6 +68,27 @@ const batchUI = createImageBackfillUI({ controller: batch, getContext: () => con
 } });
 globalThis.__zhikuBackfill = batchUI;
 window.stcrSelfTest = async () => {
+    const pauseGate=createNaiGate({gap:0}),pauseUI=createGenerationPauseControls({document,queue:pauseGate}),pauseHead=document.createElement('section');
+    pauseHead.innerHTML=generationPauseHeader(pauseGate);document.body.append(pauseHead);
+    const pauseBar=document.querySelector('.zk-generation-pause'),headToggle=pauseHead.querySelector('[data-generation-toggle]'),barToggle=pauseBar.querySelector('button');
+    check('空闲不显示悬浮条但面板可暂停',pauseBar.hidden&&headToggle.textContent==='暂停生图');
+    headToggle.click();
+    check('面板暂停与悬浮继续按钮同步',pauseGate.snapshot().paused&&!pauseBar.hidden&&headToggle.textContent==='继续生图'&&barToggle.textContent==='继续生图');
+    const pauseSent=[];let finishPauseImage;
+    const firstPauseImage=pauseGate.run(async()=>{pauseSent.push(1);await new Promise(resolve=>{finishPauseImage=resolve;});});
+    const secondPauseImage=pauseGate.run(async()=>{pauseSent.push(2);});await nextTurn();
+    check('暂停状态新生图排队不发送',pauseSent.length===0&&pauseBar.textContent.includes('等待 2 项'));
+    barToggle.click();await nextTurn();
+    check('悬浮继续按钮开始原队列第一张',pauseSent.join(',')==='1'&&pauseGate.snapshot().active===1);
+    headToggle.click();finishPauseImage();await firstPauseImage;await nextTurn();
+    check('当前图完成但暂停阻止下一张',pauseSent.join(',')==='1'&&pauseGate.snapshot().queued===1&&pauseBar.textContent.includes('已暂停'));
+    const pauseBounds=pauseBar.getBoundingClientRect();
+    check('暂停悬浮条位于移动屏幕范围内',pauseBounds.width>0&&pauseBounds.left>=0&&pauseBounds.right<=innerWidth);
+    barToggle.click();await secondPauseImage;
+    check('继续按原顺序完成且空闲收起',pauseSent.join(',')==='1,2'&&pauseBar.hidden&&headToggle.textContent==='暂停生图');
+    pauseUI.stop();headToggle.click();
+    check('停用时移除悬浮条和按钮事件',!document.querySelector('.zk-generation-pause')&&!pauseGate.snapshot().paused);
+    pauseHead.remove();pauseGate.stop();
     const savedBackfill=globalThis.__zhikuBackfill,savedToast=globalThis.toastr;
     const floorRow=document.createElement('div');floorRow.className='mes';floorRow.setAttribute('mesid','42');floorRow.innerHTML='<div class="mes_buttons"></div>';document.querySelector('#chat').append(floorRow);
     const floorCalls=[],floorToasts=[];let finishFloor;
