@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.24';
+export const runtimeVersion = '0.8.60-native.25';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -239,37 +239,25 @@ function createProfileEditor({profiles,characters,modal,esc,preview}) {
     function open(key) {
         unsubscribe();box?.closeModal();
         const char=characters.getChar(key);if(!char)return;
-        const library=`<section style="min-width:0"><b>保存的外貌方案</b><p class="pc-hint">每个人可保存多套，不会被最近 10 次 AI 历史淘汰。切换整套替换当前标签，不叠加。</p>
-            <input class="pc-input" data-profile-name aria-label="外貌方案名称" placeholder="方案名，例如黑发红眼、银发蓝眼">
-            <button class="pc-btn" data-profile-save>保存当前外貌为新方案</button>
-            <select class="pc-input" data-profile-presets aria-label="已保存外貌方案" style="width:100%;max-width:100%;min-width:0"></select>
-            <button class="pc-btn" data-profile-apply>使用选中方案</button>
-            <details><summary>粘贴整套标签 / 一键清空</summary><p class="pc-hint">英文标签用逗号或换行分隔，支持 NAI 双冒号权重。替换与清空前的标签会进入最近历史，可用「上一方案」恢复。</p>
+        const editor=`<section style="min-width:0">
+            <details><summary>粘贴整套标签 / 一键清空</summary><p class="pc-hint">英文标签用逗号或换行分隔，支持 NAI 双冒号权重。替换与清空前的标签会进入最近历史，可用「上一记录」恢复。</p>
             <textarea class="pc-textarea" data-profile-replacement rows="3" aria-label="整套英文外貌标签" placeholder="1boy, black hair, red eyes"></textarea>
             <div class="pc-actions wrap"><button class="pc-btn" data-profile-replace>整套替换当前外貌</button><button class="pc-btn" data-profile-clear>一键清空当前外貌</button></div></details></section>`;
-        box=modal(`<h3 class="pc-h3">${esc(char.name)} · 外貌方案</h3>${library}<p class="pc-hint">下方为最近历史与 AI 修改。可用中文描述修改，例如换成银色短发、保留灰色眼睛。后续配图使用当前标签。</p><p data-profile-state role="status"></p><pre data-profile-tags style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:25vh;overflow:auto"></pre><textarea class="pc-textarea" data-profile-request rows="3" placeholder="写下你的外貌修改意见"></textarea><div class="pc-actions wrap"><button class="pc-btn" data-profile-prev>上一方案</button><button class="pc-btn" data-profile-next>下一方案</button><button class="pc-btn dark" data-profile-reroll>重roll外貌</button><button class="pc-btn" data-profile-modify>按意见修改</button><button class="pc-btn" data-profile-preview>试画当前方案</button><button class="pc-btn" data-profile-close>关闭</button></div><p class="pc-hint" data-profile-error role="status"></p>`);
+        box=modal(`<h3 class="pc-h3">${esc(char.name)} · 外貌编辑</h3>${editor}<p class="pc-hint">下方为最近历史与 AI 修改。可用中文描述修改，例如换成银色短发、保留灰色眼睛。后续配图使用当前标签。</p><p data-profile-state role="status"></p><pre data-profile-tags style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:25vh;overflow:auto"></pre><textarea class="pc-textarea" data-profile-request rows="3" placeholder="写下你的外貌修改意见"></textarea><div class="pc-actions wrap"><button class="pc-btn" data-profile-prev>上一记录</button><button class="pc-btn" data-profile-next>下一记录</button><button class="pc-btn dark" data-profile-reroll>重roll外貌</button><button class="pc-btn" data-profile-modify>按意见修改</button><button class="pc-btn" data-profile-preview>试画当前方案</button><button class="pc-btn" data-profile-close>关闭</button></div><p class="pc-hint" data-profile-error role="status"></p>`);
         const currentBox=box,find=selector=>currentBox.querySelector(selector);
         function render() {
             const current=characters.getChar(key);if(!current)return;
             const info=current.autoProfile||{},versions=Array.isArray(info.versions)?info.versions:[],active=info.active??versions.length-1,working=profiles.isBusy(key);
-            const presets=Array.isArray(current.appearancePresets)?current.appearancePresets:[],select=find('[data-profile-presets]'),selected=select.value;
-            select.innerHTML='<option value="">选择已保存方案（'+presets.length+' 套）</option>'+presets.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
-            if(presets.some(p=>p.id===selected))select.value=selected;
             find('[data-profile-tags]').textContent=(current.appearance||[]).map(tag=>tag.en+(tag.zh?'（'+tag.zh+'）':'')).join(', ');
             const manual=versions.length&&JSON.stringify(versions[active]?.appearance)!==JSON.stringify(current.appearance);
             find('[data-profile-state]').textContent=working?'正在处理外貌方案…':`${manual?'当前手动标签':`最近历史 ${versions.length?active+1:1} / ${versions.length||1}`}${info.inferred?' · 含 AI 补全':''}${!manual&&versions[active]?.note?' · '+versions[active].note:''}`;
             for(const element of currentBox.querySelectorAll('button:not([data-profile-close]),textarea,input,select'))element.disabled=working;
-            find('[data-profile-save]').disabled=working||!current.appearance?.length;
             find('[data-profile-clear]').disabled=working||!current.appearance?.length;
-            find('[data-profile-apply]').disabled=working||!select.value;
             find('[data-profile-prev]').disabled=working||active<=0;
             find('[data-profile-next]').disabled=working||active>=versions.length-1;
             find('[data-profile-preview]').disabled=working||!current.appearance?.length;
         }
         async function action(run) {find('[data-profile-error]').textContent='';try{await run();}catch(error){find('[data-profile-error]').textContent=error?.message||String(error);}render();}
-        find('[data-profile-presets]').onchange=render;
-        find('[data-profile-save]').onclick=()=>action(async()=>{if(await profiles.savePreset(key,find('[data-profile-name]').value)){find('[data-profile-presets]').value=characters.getChar(key).appearancePresets.at(-1).id;find('[data-profile-error]').textContent='已保存，可从方案列表随时切换';}});
-        find('[data-profile-apply]').onclick=()=>action(()=>profiles.applyPreset(key,find('[data-profile-presets]').value));
         find('[data-profile-replace]').onclick=()=>action(()=>profiles.replaceAppearance(key,find('[data-profile-replacement]').value));
         find('[data-profile-clear]').onclick=()=>action(()=>profiles.clearAppearance(key));
         find('[data-profile-reroll]').onclick=()=>action(()=>profiles.revise(key));
@@ -2547,7 +2535,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.24（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.25（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2596,7 +2584,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.24';
+globalThis.__PC_VERSION = '0.8.60-native.25';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -9336,7 +9324,7 @@ function viewCharEdit(d) {
     ${c.kind !== 'free' && (family.length > 1 || c.kind !== 'user') ? `<div class="pc-chips">${family.map(f => `<button class="pc-pill ${f.key === c.key ? 'on' : 'dashed'}" data-act="openchar" data-key="${esc(f.key)}">${esc(f.name)}${f.kind === 'side' ? '（配角）' : ''}</button>`).join('')}${card ? '<button class="pc-pill dashed" data-act="addside">＋ 配角</button>' : ''}</div>` : ''}
 
     <section class="pc-card pc-pad pc-mt">
-      <div class="pc-row-between"><b>固定外貌</b><span class="pc-chips" style="margin:0"><button class="pc-pill dashed tiny" data-act="profile-open" ${busy ? 'disabled' : ''}>外貌方案 · 存取 / AI</button>${c.kind !== 'free' ? `<button class="pc-pill dashed tiny" data-act="readcard" ${busy ? 'disabled' : ''}>${busy === 'read' ? '读取中…' : c.kind === 'user' ? '从人设读' : c.kind === 'side' ? '从卡和世界书读' : '从角色卡读'}</button>` : ''}<label class="pc-pill dashed tiny">${busy === 'look' ? '<span class="pc-busy">看图中</span>' : '从图片读'}<input type="file" accept="image/*" data-lookimg hidden></label></span></div>
+      <div class="pc-row-between"><b>固定外貌</b><span class="pc-chips" style="margin:0"><button class="pc-pill dashed tiny" data-act="profile-open" ${busy ? 'disabled' : ''}>外貌编辑 · AI / 清空</button>${c.kind !== 'free' ? `<button class="pc-pill dashed tiny" data-act="readcard" ${busy ? 'disabled' : ''}>${busy === 'read' ? '读取中…' : c.kind === 'user' ? '从人设读' : c.kind === 'side' ? '从卡和世界书读' : '从角色卡读'}</button>` : ''}<label class="pc-pill dashed tiny">${busy === 'look' ? '<span class="pc-busy">看图中</span>' : '从图片读'}<input type="file" accept="image/*" data-lookimg hidden></label></span></div>
       ${renderAppearancePresets(c,{esc,busy:!!busy||!!globalThis.__zhikuProfiles?.isBusy(c.key)})}
       <div class="pc-dim small">头发、眼睛、脸、身材这类不会变的。第一个写 1boy 或 1girl。点标签可以改，× 删掉。</div>
       ${c.kind === 'char' || c.kind === 'side' ? `<button class="pc-pill dashed tiny pc-mt-s" data-act="readcast" ${busy ? 'disabled' : ''}>${busy === 'cast' ? '<span class="pc-busy">读取中</span>' : '读出这张卡里所有人（含世界书）'}</button><button class="pc-pill dashed tiny pc-mt-s" style="margin-left:6px" data-act="readchatcast" ${busy ? 'disabled' : ''}>${busy === 'chatcast' ? '<span class="pc-busy">读取中</span>' : '从聊天正文读出人物（最近 40 楼）'}</button>` : ''}

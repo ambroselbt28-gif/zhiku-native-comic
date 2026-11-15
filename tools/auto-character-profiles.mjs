@@ -34,7 +34,7 @@ export function applyAutoCharacterProfiles(source) {
         setTimeout(addMesButtons,50);
     };
 `);
-    patch('<b>固定外貌</b><span class="pc-chips" style="margin:0">',`<b>固定外貌</b><span class="pc-chips" style="margin:0"><button class="pc-pill dashed tiny" data-act="profile-open" \${busy ? 'disabled' : ''}>外貌方案 · 存取 / AI</button>`);
+    patch('<b>固定外貌</b><span class="pc-chips" style="margin:0">',`<b>固定外貌</b><span class="pc-chips" style="margin:0"><button class="pc-pill dashed tiny" data-act="profile-open" \${busy ? 'disabled' : ''}>外貌编辑 · AI / 清空</button>`);
     patch('      <div class="pc-dim small">头发、眼睛、脸、身材这类不会变的。',`      \${renderAppearancePresets(c,{esc,busy:!!busy||!!globalThis.__zhikuProfiles?.isBusy(c.key)})}
       <div class="pc-dim small">头发、眼睛、脸、身材这类不会变的。`);
     patch("        case 'casttab':",`        case 'profile-open': globalThis.__zhikuProfiles?.open(ui.charKey); return true;
