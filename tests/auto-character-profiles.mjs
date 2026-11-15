@@ -10,7 +10,7 @@ import { parseImageMarkers } from '../src/marker-generation.js';
 
 const runtime=fs.readFileSync(new URL('../runtime.js',import.meta.url),'utf8');
 const part=(a,b)=>{const start=runtime.indexOf(a),end=runtime.indexOf(b,start);assert(start>=0&&end>start,a);return runtime.slice(start,end);};
-const generated=vm.runInNewContext(part('// 自动人物建档与外貌方案版本','// 只调度当前聊天')+'\n({createAutoCharacterProfiles,profileAppearance})',{...images,isComicReply,parseImageMarkers});
+const generated=vm.runInNewContext(part('// 自动人物建档与外貌方案版本','// 只调度当前聊天')+'\n({createAutoCharacterProfiles,profileAppearance,manualAppearance})',{...images,isComicReply,parseImageMarkers});
 const M=vm.runInNewContext(part('const __mod_model =','// ───── store.js')+'\n__mod_model',{structuredClone});
 const defer=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 function setup(code) {
@@ -27,6 +27,41 @@ function setup(code) {
     return {profiles,deps,C,calls,warnings,get data(){return data;},get context(){return context;},get saves(){return saves;},response:value=>{response=value;},hold:value=>{hold=value;},failSave:value=>{failSave=value;},reload(){data=M.normalizeData(JSON.parse(JSON.stringify(data)));},switchChat(){context={...context,chatId:'other',chat:[{name:'主角',mes:'另一段剧情'}]};profiles.chatChanged();}};
 }
 for(const [label,code]of [['源码',original],['发布代码',generated]]) {
+    // 保存方案独立于最近历史；手动替换不调用 AI，也不覆盖其他角色或原有衣柜。
+    const saved=setup(code),savedKey='char:main.png',snapshot=JSON.stringify(saved.C.getChar(savedKey).appearance);
+    await saved.profiles.savePreset(savedKey,'黑发原版');
+    const first=saved.C.getChar(savedKey).appearancePresets[0].id;
+    await saved.profiles.replaceAppearance(savedKey,'1boy, 1.2::silver hair, blue eyes::\n freckles');
+    assert.equal(saved.C.getChar(savedKey).appearance.length,3);
+    assert.equal(saved.C.getChar(savedKey).appearance[1].en,'1.2::silver hair, blue eyes::');
+    await saved.profiles.savePreset(savedKey,'银发版');
+    await assert.rejects(saved.profiles.savePreset(savedKey,'银发版'),/同名/);
+    assert.equal(saved.calls.length,0,'手动存取不调用 AI');
+    await saved.profiles.applyPreset(savedKey,first);
+    assert.equal(JSON.stringify(saved.C.getChar(savedKey).appearance),snapshot,'使用方案替换整个数组');
+    await saved.profiles.clearAppearance(savedKey);
+    assert.equal(saved.C.getChar(savedKey).appearance.length,0);
+    await saved.profiles.select(savedKey,saved.C.getChar(savedKey).autoProfile.active-1);
+    assert.equal(JSON.stringify(saved.C.getChar(savedKey).appearance),snapshot,'清空前标签能恢复');
+    for(let i=0;i<12;i++)await saved.profiles.replaceAppearance(savedKey,'black hair, mark '+i);
+    assert.equal(saved.C.getChar(savedKey).autoProfile.versions.length,10);
+    assert.equal(saved.C.getChar(savedKey).appearancePresets.length,2,'历史淘汰不影响命名方案');
+    saved.reload();await saved.profiles.applyPreset(savedKey,first);
+    assert.equal(JSON.stringify(saved.C.getChar(savedKey).appearance),snapshot,'重载后方案仍能使用');
+    saved.C.getChar(savedKey).appearance[0].en='modified';
+    assert.equal(JSON.stringify(saved.C.getChar(savedKey).appearancePresets[0].appearance),snapshot,'当前标签与保存方案不共享引用');
+    let snapshotAll=JSON.stringify(saved.C.getChar(savedKey));saved.failSave(true);
+    for(const operation of [()=>saved.profiles.savePreset(savedKey,'失败方案'),()=>saved.profiles.applyPreset(savedKey,first),()=>saved.profiles.clearAppearance(savedKey),()=>saved.profiles.replaceAppearance(savedKey,'blue hair')]){
+        await assert.rejects(operation(),/保存失败/);assert.equal(JSON.stringify(saved.C.getChar(savedKey)),snapshotAll,'保存失败完整回滚');
+    }
+    saved.failSave(false);
+    await assert.rejects(saved.profiles.replaceAppearance(savedKey,'1.2::black hair'),/没有成对/);
+    await assert.rejects(saved.profiles.replaceAppearance(savedKey,''),/粘贴英文/);
+    assert.equal(JSON.stringify(saved.C.getChar(savedKey)),snapshotAll);
+    const lock=defer();saved.hold(lock.promise);saved.response({appearance:['1boy','pink hair']});
+    const running=saved.profiles.revise(savedKey);
+    assert.equal(await saved.profiles.clearAppearance(savedKey),false,'AI 操作中阻止手动覆盖');lock.resolve();await running;saved.hold(null);
+    assert.equal(saved.C.getChar(savedKey).appearancePresets.length,2,'AI 修改保留命名方案');saved.profiles.stop();
     const h=setup(code),beforeMain=JSON.stringify(h.data.characters['char:main.png']);
     const initial=h.profiles.scan(0);
     assert.equal(h.profiles.scan(0),initial,'同楼并发只请求一次');

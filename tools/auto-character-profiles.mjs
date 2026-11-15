@@ -34,7 +34,7 @@ export function applyAutoCharacterProfiles(source) {
         setTimeout(addMesButtons,50);
     };
 `);
-    patch('<b>固定外貌</b><span class="pc-chips" style="margin:0">',`<b>固定外貌</b><span class="pc-chips" style="margin:0"><button class="pc-pill dashed tiny" data-act="profile-open" \${busy ? 'disabled' : ''}>外貌方案 · AI修改</button>`);
+    patch('<b>固定外貌</b><span class="pc-chips" style="margin:0">',`<b>固定外貌</b><span class="pc-chips" style="margin:0"><button class="pc-pill dashed tiny" data-act="profile-open" \${busy ? 'disabled' : ''}>外貌方案 · 存取 / AI</button>`);
     patch("        case 'casttab':",`        case 'profile-open': globalThis.__zhikuProfiles?.open(ui.charKey); return true;
         case 'profile-scan': await globalThis.__zhikuProfiles?.scan((SillyTavern.getContext().chat?.length||0)-1,{manual:true,force:true}); render(); return true;
         case 'casttab':`);
