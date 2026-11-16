@@ -16,6 +16,13 @@ const api=vm.runInNewContext(between('function loadStudio()','function studioSou
 try{
  api.loadStudio();ui.studio.pos='artist:alpha';ui.studio.neg='blurry';api.applyScene({scene:'rain, window',sceneEn:'',sceneSrc:''});api.setStudioCast([{key:'a',pos:'L',outfit:'coat'},{key:'b',pos:'R'}]);
  await api.doGenerate();let req=requests.at(-1);assert.equal(req.parameters.v4_prompt.caption.char_captions.length,2);assert.match(req.input,/artist:alpha/);assert.match(req.input,/rain, window/);assert.match(req.parameters.v4_prompt.caption.char_captions[0].char_caption,/black coat/);assert.equal(req.parameters.v4_prompt.caption.char_captions[0].centers[0].x,0.3);assert.equal(E.runtime.lastSent.director,1);
+ // 补充词走正式生成入口，双人请求、预览和无画师串单独生成保持一致。
+ ui.studio.extraPositive='soft rim light';ui.studio.extraNegative='photorealistic';
+ const extraPreview=api.previewHtml(config);await api.doGenerate();req=requests.at(-1);
+ assert.equal(req.input,extraPreview.pos.split('<br>')[0]);assert.match(req.input,/soft rim light/);assert.match(req.parameters.negative_prompt,/photorealistic/);assert.equal(req.parameters.v4_prompt.caption.char_captions.length,2);
+ api.setStudioCast([]);ui.studio.pos='';ui.studio.scene='';ui.studio.extraPositive='1girl, reading a book';
+ await api.doGenerate();assert.match(requests.at(-1).input,/1girl, reading a book/);
+ ui.studio.pos='artist:alpha';ui.studio.scene='rain, window';ui.studio.extraPositive='';ui.studio.extraNegative='';
  api.setStudioCast([{key:'a',pos:'C',outfit:''}]);await api.doGenerate();req=requests.at(-1);assert.match(req.input,/solo/);assert(!req.input.includes('black coat'));
  // 固定提示词排在衣服前面；每人动作进自己那段；「聊天不分角色」不影响生图页
  api.setStudioCast([{key:'a',pos:'C',outfit:'coat'}]);await api.doGenerate();req=requests.at(-1);assert(req.input.indexOf('rain, window')<req.input.indexOf('black coat'),'scene before outfit');assert(req.input.indexOf('black hair')<req.input.indexOf('rain, window'));

@@ -22,6 +22,12 @@ const scene=vm.runInNewContext(between('function sceneZh()','function ucpOptions
 async function generate(){const preview=scene.previewHtml(config);await E.generate(scene.studioParts());const request=requests.at(-1).body;assert.equal(request.input??request.prompt,preview.pos);assert.equal(E.runtime.lastSent.prompt,preview.pos);return request;}
 try {
     let req=await generate();assert.equal(req.input,'artist:alpha, window, rain, sitting');assert.equal(req.parameters.v4_prompt.caption.base_caption,req.input);assert.equal(req.parameters.negative_prompt,'blurry');
+    ui.studio.extraPositive='1girl, long black hair, A woman reads beside the window.';ui.studio.extraNegative='photorealistic, 3d';
+    req=await generate();assert.match(req.input,/1girl, long black hair/);assert.match(req.input,/A woman reads beside the window/);assert.equal(req.parameters.negative_prompt,'blurry, photorealistic, 3d');
+    assert.equal(ui.studio.pos,'artist:alpha, window','补充内容不混进画师串');assert.equal(ui.studio.neg,'blurry');
+    ui.studio.sceneOn=false;req=await generate();assert.match(req.input,/1girl/);assert(!req.input.includes('rain'),'关闭固定词不关闭本次补充');
+    ui.studio.pos='';req=await generate();assert.match(req.input,/1girl/);assert.equal(req.parameters.v4_prompt.caption.base_caption,req.input,'只写补充也能组成有效请求');
+    ui.studio.pos='artist:alpha, window';ui.studio.extraPositive='';ui.studio.extraNegative='';ui.studio.sceneOn=true;
     ui.studio.sceneOn=false;req=await generate();assert.equal(req.input,'artist:alpha, window');
     ui.studio.sceneOn=true;ui.studio.scene='坐在窗边';ui.studio.sceneSrc='坐在窗边';ui.studio.sceneEn='sitting, window';req=await generate();assert.equal(req.input,'artist:alpha, window, sitting');
     // Saved/restored studio fields still feed the actual request.

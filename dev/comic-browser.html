@@ -17,7 +17,7 @@ textarea, input, select { max-width: 100%; box-sizing: border-box; }
 <button data-act="image-backfill">补未生图楼层</button>
 <pre id="results">运行中</pre>
 <script type="module">
-import { mountArtistMemberTest, addMesButtons, mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
+import { mountStudioExtrasTest, mountArtistMemberTest, addMesButtons, mountCameraPresetTest, renderNetworkControls, networkSettingsChange, runNetworkProbe } from './runtime-comic.js';
 import {createGenerationPauseControls,createNaiGate,generationPauseHeader} from './runtime-comic.js';
 import { renderCharacterReferencePicker, pickCharacterReference, createNaiNetwork, createComicController, comicLayoutExample, onChatClick, createImageBackfill, createImageBackfillUI, onBackfillClick, renderIllustrationEditor, createIllustrationEditor, createAutoCharacterProfiles, createProfileEditor, renderAppearancePresets, profileAction } from './runtime-comic.js';
 const checks = [];
@@ -127,6 +127,20 @@ window.stcrSelfTest = async () => {
     check('组被删除后不能误写入',stale.saves()===0&&stale.box.textContent.includes('画师组已变化'));stale.box.closeModal();
     const empty=mountArtistMemberTest({groups:{group:{members:[]}},artists:{}});
     check('空库仍提供原手动输入入口',empty.box.textContent.includes('画师库还是空的')&&!!empty.box.querySelector('[data-artist-manual]'));empty.box.closeModal();
+    const extraBox=document.createElement('section');extraBox.style.cssText='max-width:600px;width:100%;box-sizing:border-box';document.body.append(extraBox);
+    const extraTest=mountStudioExtrasTest(extraBox),extraInput=key=>extraBox.querySelector('[data-bind="studio.'+key+'"]');
+    check('生图补充正负面输入框默认展开',!!extraInput('extraPositive')&&!!extraInput('extraNegative')&&!extraInput('extraPositive').closest('details'));
+    const fillExtra=(key,text)=>{const field=extraInput(key);field.value=text;field.dispatchEvent(new Event('input',{bubbles:true}));};
+    fillExtra('extraPositive','1girl, reading');fillExtra('extraNegative','photorealistic, 3d');
+    check('输入补充立即进入预览且保留画师串',extraBox.querySelector('[data-extra-preview]').textContent.includes('1girl, reading')&&extraBox.querySelector('[data-extra-preview]').textContent.includes('photorealistic, 3d')&&extraTest.ui.studio.pos==='artist:alpha'&&extraTest.ui.studio.neg==='lowres');
+    extraTest.save();extraTest.reload();
+    check('生图补充草稿保存后重新打开保留',extraInput('extraPositive').value==='1girl, reading'&&extraInput('extraNegative').value==='photorealistic, 3d');
+    extraBox.querySelector('[data-act="studioextraclear"]').click();
+    check('清空补充只清新字段并持久化',extraInput('extraPositive').value===''&&extraInput('extraNegative').value===''&&extraTest.saved().extraPositive===''&&extraTest.saved().pos==='artist:alpha'&&extraTest.saved().neg==='lowres'&&extraTest.saved().scene==='window');
+    fillExtra('extraPositive','</textarea><img src=x onerror=alert(1)>');extraTest.save();extraTest.reload();
+    check('补充内容回显按文本转义',!extraBox.querySelector('img')&&extraInput('extraPositive').value.startsWith('</textarea>'));
+    const extraBounds=extraBox.getBoundingClientRect();
+    check('手机补充输入框不横向溢出',extraBounds.right<=innerWidth&&extraBox.scrollWidth<=extraBox.clientWidth);extraTest.stop();extraBox.remove();
     const savedBackfill=globalThis.__zhikuBackfill,savedToast=globalThis.toastr;
     const floorRow=document.createElement('div');floorRow.className='mes';floorRow.setAttribute('mesid','42');floorRow.innerHTML='<div class="mes_buttons"></div>';document.querySelector('#chat').append(floorRow);
     const floorCalls=[],floorToasts=[];let finishFloor;

@@ -76,6 +76,30 @@ export function mountArtistMemberTest(data){
     return {box,saves:()=>saves};
 }
 `;
+const studioExtraView=runtime.slice(runtime.indexOf('// 生图页补充词只参与'),runtime.indexOf('// 生图页补充词界面结束。'));
+const studioExtraLoad=runtime.slice(runtime.indexOf('function loadStudio()'),runtime.indexOf('function studioSource()'));
+const studioExtraParts=runtime.slice(runtime.indexOf('function studioParts()'),runtime.indexOf('/** 固定提示词（原来在页面下面'));
+const studioExtraInputStart=runtime.indexOf('    if (el.dataset.bind) {',runtime.indexOf('function onInput(ev)'));
+const studioExtraInput=runtime.slice(studioExtraInputStart,runtime.indexOf('    if (el.dataset.bindArtist)',studioExtraInputStart));
+const studioExtraClear=runtime.slice(runtime.indexOf("case 'studioextraclear':"),runtime.indexOf("case 'generate': await doGenerate();",runtime.indexOf("case 'studioextraclear':")));
+networkUiModule+=studioExtraView+`
+export function mountStudioExtrasTest(root){
+    const ui={studio:{loaded:false,open:{}}},data={groups:{},studio:{pos:'artist:alpha',neg:'lowres',scene:'window'}};let saved;
+    const getData=()=>data,commit=()=>{saved=JSON.parse(JSON.stringify(data.studio));};
+    const M={ticketString:()=>'',resolveTicket:()=>null,ticketNeg:()=>''};
+    const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+    ${studioExtraLoad}
+    const sceneTags=()=>ui.studio.scene;
+    ${studioExtraParts}
+    const setPath=(obj,path,value)=>{const keys=path.split('.');obj[keys[0]][keys[1]]=value;};
+    const updateStudioPreview=()=>{const p=studioParts();root.querySelector('[data-extra-preview]').textContent=[p.pos,p.scene,p.neg].join(' | ');};
+    function onInput(ev){const el=ev.target;${studioExtraInput}}
+    function render(){root.innerHTML=renderStudioExtraPrompts(ui.studio,esc)+'<pre data-extra-preview style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>';updateStudioPreview();}
+    root.addEventListener('input',onInput);
+    root.addEventListener('click',ev=>{switch(ev.target.closest('[data-act]')?.dataset.act){${studioExtraClear}}});
+    loadStudio();render();return {ui,saved:()=>saved,save:saveStudio,reload(){ui.studio.loaded=false;loadStudio();render();},stop(){clearTimeout(onInput.ss);}};
+}
+`;
 const referenceAction = runtime.match(/case 'charrefpick': ([^\n]+)/)?.[1];
 if (!referenceAction) throw new Error('缺少正式参考绑定操作');
 const module = networkUiModule + referencePicker + '\nfunction pickCharacterReference(c,el,save) {'+referenceAction+'}\n' + naiNetwork + '\n' + characters + '\n' + illustration + '\n' + illustrationEditor + '\n' + profiles + '\n' + markers + '\n' + backfill + '\n' + controller + '\nconst N = { isReady: () => true };\n' + clickHandler
@@ -113,7 +137,7 @@ try {
         ], { env: { ...process.env, TEMP: scratch, TMP: scratch }, timeout: 30_000, maxBuffer: 1024 * 1024 });
         const reportText = stdout.match(/<pre id="results">([^<]*)<\/pre>/)?.[1];
         const report = JSON.parse((reportText || '{}').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
-        if (report.error || report.passed !== 160) throw new Error(`${width}px ${JSON.stringify(report)}`);
+        if (report.error || report.passed !== 166) throw new Error(`${width}px ${JSON.stringify(report)}`);
         console.log(`PASS ${width}px · ${report.passed} 项浏览器正式入口检查`);
     }
 } finally {

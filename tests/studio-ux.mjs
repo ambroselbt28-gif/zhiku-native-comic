@@ -17,10 +17,13 @@ studio.loadStudio();assert.equal(ui.studio.sourceRef.id,original.id);
 assert.equal(ui.studio.neg,'text','initial draft must carry the original negative prompt');
 assert.equal(ui.studio.lastExtra,'soft lighting','changing strings must know which extras belong to the original');
 ui.studio.pos='1.2::artist:c::, watercolor';ui.studio.neg='watermark';
+ui.studio.extraPositive='1girl, reading';ui.studio.extraNegative='photo';
 studio.saveStudio();ui.studio.loaded=false;d=M.normalizeData(JSON.parse(persisted));studio.loadStudio();
+assert.equal(ui.studio.extraPositive,'1girl, reading');assert.equal(ui.studio.extraNegative,'photo');
 assert.equal(ui.studio.sourceRef.id,original.id,'draft retains source after all original artists are removed and reloaded');
 answers.push(0);await studio.saveStudioTicket();
 assert.equal(Object.keys(d.groups).length,1);assert.equal(M.ticketString(d,original),ui.studio.pos);
+assert(!M.ticketString(d,original).includes('reading'),'保存画师串不包含本次内容');
 assert.equal(d.groups[original.id].neg,'watermark');assert.equal(d.groups[original.id].name,'原串');
 assert.equal(d.groups[original.id].images[0].path,'keep.png');assert.equal(d.groups[original.id].collections[0],'tag');
 assert.equal(d.groups[original.id].note,'keep');assert.equal(d.groups[original.id].fav,true);assert.equal(d.groups[original.id].custom.keep,true);
@@ -38,7 +41,10 @@ assert.throws(()=>M.overwriteGroup(d,ui.studio.sourceRef,'artist:d',''),/已被�
 assert.equal(d.bindings.card.id,original.id,'unrelated binding survives deletion');
 // Existing data with no tracked source must not be matched by artist names alone.
 d.studio={pos:'1.2::artist:c::, different scene',neg:'watermark'};ui.studio.loaded=false;studio.loadStudio();assert.equal(ui.studio.sourceRef,null);
-ui.studio.clearUndo='old draft';studio.applyArtistToStudio(original);assert.equal(ui.studio.clearUndo,null,'switching strings must discard undo from the previous source');
+assert.equal(ui.studio.extraPositive,'');assert.equal(ui.studio.extraNegative,'');
+ui.studio.extraPositive='1girl, reading';ui.studio.extraNegative='photo';
+ui.studio.clearUndo='old draft';studio.applyArtistToStudio(original);assert.equal(ui.studio.extraPositive,'1girl, reading');assert.equal(ui.studio.extraNegative,'photo');
+assert.equal(ui.studio.clearUndo,null,'switching strings must discard undo from the previous source');
 
 function naiHarness(saved={}) {
     const settings={piaoce_nai:saved},requests=[];

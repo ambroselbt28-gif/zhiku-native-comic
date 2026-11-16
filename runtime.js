@@ -1,5 +1,5 @@
 // 由完整脚本和 src 模块构建，漫画二改源文件见 src/comic.js。
-export const runtimeVersion = '0.8.60-native.30';
+export const runtimeVersion = '0.8.60-native.31';
 export function createRuntime() {
 let stopped = false;
 const timers = new Set();
@@ -2613,7 +2613,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · NAI5 原生漫画二改版 v0.8.60-native.30（二改自从前佬的智绘姬）
+// 智库 · NAI5 原生漫画二改版 v0.8.60-native.31（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -2662,7 +2662,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.60-native.30';
+globalThis.__PC_VERSION = '0.8.60-native.31';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -7625,6 +7625,8 @@ function loadStudio() {
     st.neg = saved.neg ?? M.ticketNeg(d, st.sourceRef);
     st.lastExtra = saved.lastExtra ?? (st.sourceRef?.type === 'group' ? d.groups[st.sourceRef.id]?.extra || '' : '');
     st.lastNeg = saved.lastNeg ?? M.ticketNeg(d, st.sourceRef);
+    st.extraPositive = String(saved.extraPositive || '');
+    st.extraNegative = String(saved.extraNegative || '');
     st.scene = saved.scene || '';
     st.sceneOn = saved.sceneOn !== false;
     st.sceneEn = saved.sceneEn || '';
@@ -7640,7 +7642,7 @@ function loadStudio() {
 function saveStudio() {
     const d = getData();
     const st = ui.studio;
-    d.studio = { sourceRef: st.sourceRef || null, pos: st.pos, neg: st.neg, lastExtra: st.lastExtra, lastNeg: st.lastNeg || '', scene: st.scene || '', sceneOn: st.sceneOn !== false, sceneEn: st.sceneEn || '', sceneSrc: st.sceneSrc || '', sceneExpand: !!st.sceneExpand, cast: st.cast || [], castByChat: st.castByChat || {}, castMemo: st.castMemo !== false, scenes: st.scenes || [], recentScenes: st.recentScenes || [] };
+    d.studio = { extraPositive: st.extraPositive || '', extraNegative: st.extraNegative || '', sourceRef: st.sourceRef || null, pos: st.pos, neg: st.neg, lastExtra: st.lastExtra, lastNeg: st.lastNeg || '', scene: st.scene || '', sceneOn: st.sceneOn !== false, sceneEn: st.sceneEn || '', sceneSrc: st.sceneSrc || '', sceneExpand: !!st.sceneExpand, cast: st.cast || [], castByChat: st.castByChat || {}, castMemo: st.castMemo !== false, scenes: st.scenes || [], recentScenes: st.recentScenes || [] };
     commit({ silent: true });
 }
 function studioSource() {
@@ -7905,7 +7907,10 @@ function sceneLibrary() {
       })() : ''}
       ${recent.length ? `<details class="pc-recent-scenes" ${ui.studio.open.recentScenes ? 'open' : ''} data-fold="recentScenes"><summary>最近用过 ${recent.length} 条（生成时自动记）▸</summary>${recent.map((p, i) => sceneRow(p, i, 'recent')).join('')}<div class="pc-actions" style="margin-top:6px"><button class="pc-pill tiny dashed" data-act="sceneclear">清空最近</button></div></details>` : ''}`;
 }
-function studioParts() { return { pos: ui.studio.pos, neg: ui.studio.neg, scene: sceneTags() }; }
+function studioParts() {
+    const st=ui.studio,join=parts=>parts.map(part=>String(part||'').trim()).filter(Boolean).join(', ');
+    return {pos:st.pos,neg:join([st.neg,st.extraNegative]),scene:join([sceneTags(),st.extraPositive])};
+}
 /** 固定提示词（原来在页面下面，挪到正面、负面下面） */
 function sceneFold() {
     const st = ui.studio;
@@ -8241,6 +8246,17 @@ function useStudioForChat() {
     if (!ref) { toastr.warning('先保存当前画师串，再给正文用', '智库'); return; }
     E.setActive(ref); render();
 }
+// 生图页补充词只参与本页出图，不写入画师串或聊天生图设置。
+function renderStudioExtraPrompts(st,esc){
+    return `<section class="pc-studio-extra pc-mt-s" style="border-top:1px dashed var(--pc-dash,#aaa);padding-top:12px">
+      <div class="pc-row-between"><b>这张图要画什么</b><button type="button" class="pc-pill dashed tiny" data-act="studioextraclear">清空补充</button></div>
+      <label class="pc-field"><span>本次正面补充</span><textarea class="pc-textarea small" style="width:100%;box-sizing:border-box" data-bind="studio.extraPositive" placeholder="例如：1girl, long black hair, standing by a window, soft lighting">${esc(st.extraPositive||'')}</textarea></label>
+      <label class="pc-field"><span>本次负面补充</span><textarea class="pc-textarea small" style="width:100%;box-sizing:border-box" data-bind="studio.extraNegative" placeholder="例如：photorealistic, 3d, text, watermark">${esc(st.extraNegative||'')}</textarea></label>
+      <div class="pc-hint">填写英文 tag 或英文句子，会与上方画师串的正面、负面一起发送。只用于生图页，不保存进画师串；内容会保留到你修改或清空。中文画面描述可用下方「固定提示词」自动转换。</div>
+    </section>`;
+}
+// 生图页补充词界面结束。
+
 function viewStudio(d) {
     const s = settingsST();
     loadStudio();
@@ -8275,6 +8291,7 @@ function viewStudio(d) {
       <div id="pc-pos-ban">${banWarn(d, st.pos)}${lintHtml(st.pos)}</div>
       <label class="pc-label" for="pc-neg">负面提示词</label>
       <textarea id="pc-neg" class="pc-textarea small mono" data-bind="studio.neg" placeholder="不想出现的东西，比如 1girl, text">${esc(st.neg)}</textarea>
+      ${renderStudioExtraPrompts(st,esc)}
       <div class="pc-mini pc-mt-s">${sceneFold()}${castFold()}${i2iFold(s)}</div>
       <div class="pc-row-between" style="margin-top:10px">
         <div class="pc-chips" style="margin:0">${sizeBtn(832, 1216, '竖')}${sizeBtn(1216, 832, '横')}${sizeBtn(1024, 1024, '方')}</div>
@@ -11143,6 +11160,7 @@ async function onClick(ev, outside = false) {
                 openViewer(list[0], list);
                 break;
             }
+            case 'studioextraclear': { ui.studio.extraPositive='';ui.studio.extraNegative='';saveStudio();render();break; }
             case 'generate': await doGenerate(); break;
             case 'castopen': openCastPicker(); break;
             case 'aipuse': { const cfg = T.aiCfg(); cfg.active = el.dataset.v; commit(); render(); break; }
@@ -11901,7 +11919,7 @@ function onInput(ev) {
         if (el.dataset.bind === 'outPeopleQ') { const q = el.value.trim().toLowerCase(); root.querySelectorAll('#pc-outmore [data-name]').forEach(b => { b.style.display = q && !b.dataset.name.toLowerCase().includes(q) ? 'none' : ''; }); }
         if (el.dataset.bind === 'batch.text') { const w = root.querySelector('#pc-batch-ban'); if (w) w.innerHTML = batchBanWarn(getData(), el.value); }
         if (String(el.dataset.bind).startsWith('cfy.')) { clearTimeout(onInput.cf); onInput.cf = setTimeout(saveCfy, 600); }
-        if (['studio.pos', 'studio.neg', 'studio.scene', 'studio.sceneEn'].includes(el.dataset.bind)) { updateStudioPreview(); clearTimeout(onInput.ss); onInput.ss = setTimeout(saveStudio, 600); }
+        if (['studio.pos', 'studio.neg', 'studio.scene', 'studio.sceneEn', 'studio.extraPositive', 'studio.extraNegative'].includes(el.dataset.bind)) { updateStudioPreview(); clearTimeout(onInput.ss); onInput.ss = setTimeout(saveStudio, 600); }
         if (el.dataset.bind === 'studio.scene') { const box = root.querySelector('#pc-scene-ai'); if (box) box.hidden = !sceneZh(); const s2 = root.querySelector('#pc-scene-state'); if (s2) s2.textContent = sceneStateText(); }
         if (el.dataset.bind === 'search') { clearTimeout(onInput.t); onInput.t = setTimeout(() => { render(); const i = root.querySelector('[data-bind="search"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
         return;
@@ -12222,9 +12240,9 @@ async function doGenerate() {
     st.generating = true;
     try {
     if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '生成图片'); ui.view = 'settings'; render(); return; }
-    if (!st.pos.trim() && !studioCast().length) { toastr.warning('正面提示词是空的', '生成图片'); return; }
-    if (T.hasChinese(st.pos.replace(/（[^（）]*）/g, ''))) {
-        if (!(await confirmBox('正面提示词里有中文，NovelAI 看不懂中文。还是要生成吗？（中文描述可以写进下面的「固定提示词」，会自动转成标签）', { ok: '照样生成', cancel: '先不' }))) return;
+    if (!st.pos.trim() && !String(st.extraPositive || '').trim() && !String(sceneTags() || '').trim() && !studioCast().length) { toastr.warning('正面提示词是空的', '生成图片'); return; }
+    if (T.hasChinese([st.pos,st.extraPositive,st.extraNegative].filter(Boolean).join(', ').replace(/（[^（）]*）/g, ''))) {
+        if (!(await confirmBox('提示词或本次补充里有中文，建议先转换为英文。仍要原样生成吗？（中文画面描述可写进「固定提示词」自动转换）', { ok: '照样生成', cancel: '先不' }))) return;
     }
     if (st.sceneOn !== false && String(st.scene || '').trim() && !sceneReady()) {
         try { await translateScene(); }
